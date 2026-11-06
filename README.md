@@ -1,5 +1,8 @@
 # LED Ambilight — ELK-BLEDOM / WLED
 
+[![CI](https://github.com/arsinema/ledambilight/actions/workflows/ci.yml/badge.svg)](https://github.com/arsinema/ledambilight/actions/workflows/ci.yml)
+[![GitHub release](https://img.shields.io/github/v/release/arsinema/ledambilight)](https://github.com/arsinema/ledambilight/releases/latest)
+
 Десктоп-приложение на Python/PyQt5, которое анализирует изображение с экрана
 (через `dxcam`) и в реальном времени отправляет цвет на LED-ленту.
 
@@ -92,6 +95,9 @@ python build_exe.py
 
 OpenCV для сборки и работы не нужен: dxcam отдаёт кадры в родном BGRA,
 а приложение само переводит их в RGB средствами numpy (`capture.bgra_to_rgb`).
+
+История версий — в [CHANGELOG.md](CHANGELOG.md), порядок выпуска релиза —
+в [RELEASING.md](RELEASING.md).
 
 ## Быстрая настройка раскладки
 
@@ -228,7 +234,8 @@ OpenCV для сборки и работы не нужен: dxcam отдаёт �
   области, из которых берёт цвет каждый диод
 - **Горячие клавиши** (работают из любого приложения):
   `Ctrl+Alt+L` — пуск/стоп, `Ctrl+Alt+↑/↓` — яркость,
-  `Ctrl+Alt+B` — погасить, `Ctrl+Alt+D` — диагностика
+  `Ctrl+Alt+B` — погасить, `Ctrl+Alt+D` — диагностика;
+  `Ctrl+Q` — выход из приложения
 - **Автопауза** при блокировке экрана (`Win+L`) и при простое
 - **Мастер первого запуска** — пять шагов от подключения до первой развёртки
 - **Тест-паттерн раскладки**: схема всех диодов на весь экран одновременно

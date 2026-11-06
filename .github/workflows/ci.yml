@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  selftest:
+    name: Самотест
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Установка зависимостей
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Проверка синтаксиса
+        run: python -m compileall -q ledapp main.py selftest.py build_exe.py
+
+      - name: Самотест
+        run: python selftest.py
+
+  build:
+    name: Сборка exe
+    needs: selftest
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Установка зависимостей
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Сборка
+        run: python build_exe.py
+
+      - name: Проверка версии в exe
+        shell: pwsh
+        run: |
+          $expected = (python -c "import ledapp; print(ledapp.__version__)").Trim()
+          $info = (Get-Item dist/LEDAmbilight.exe).VersionInfo
+          Write-Host "Ожидается: $expected"
+          $info | Format-List ProductName, ProductVersion, FileVersion
+          $actual = $info.ProductVersion.Trim()
+          if (-not $actual.StartsWith($expected)) {
+            throw "Версия в exe ($actual) не совпадает с __version__ ($expected)"
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LEDAmbilight-exe
+          path: dist/LEDAmbilight.exe
+          retention-days: 7

@@ -26,7 +26,7 @@ sys.path.insert(0, APP_DIR)
 
 import numpy as np
 
-from ledapp.capture import hud_rect, apply_hud_mask, get_quadrant_color
+from ledapp.capture import bgra_to_rgb, hud_rect, apply_hud_mask, get_quadrant_color
 from ledapp.color_engine import (
     apply_calibration,
     apply_calibration_array,
@@ -383,6 +383,30 @@ def test_ui_mask_shift():
     check("без маски раскладка возвращается", mapper.led_boxes[0] == base[0])
 
 
+def test_capture_color():
+    print("\n[11] Захват: BGRA -> RGB без OpenCV")
+    bgra = np.zeros((2, 2, 4), dtype=np.uint8)
+    bgra[0, 0] = (0, 0, 255, 255)    # синий в BGRA
+    bgra[0, 1] = (0, 255, 0, 255)    # зелёный
+    bgra[1, 0] = (255, 0, 0, 255)    # красный
+    bgra[1, 1] = (10, 20, 30, 128)   # альфа не должна влиять
+    rgb = bgra_to_rgb(bgra)
+    check("BGRA -> RGB: каналы не перепутаны",
+          tuple(rgb[0, 0]) == (255, 0, 0)
+          and tuple(rgb[0, 1]) == (0, 255, 0)
+          and tuple(rgb[1, 0]) == (0, 0, 255),
+          str(rgb.tolist()))
+    check("альфа-канал отброшен", rgb.shape == (2, 2, 3), str(rgb.shape))
+    check("результат непрерывный uint8",
+          rgb.dtype == np.uint8 and rgb.flags["C_CONTIGUOUS"])
+
+    bgr = np.array([[[255, 0, 0], [0, 255, 0]]], dtype=np.uint8)
+    rgb3 = bgra_to_rgb(bgr)
+    check("BGR -> RGB (3 канала) тоже поддержан",
+          tuple(rgb3[0, 0]) == (0, 0, 255) and tuple(rgb3[0, 1]) == (0, 255, 0),
+          str(rgb3.tolist()))
+
+
 def main():
     print("=" * 60)
     print("Самотест LED Ambilight")
@@ -398,6 +422,7 @@ def main():
     test_audio_spectrum()
     test_frame_analyzer()
     test_ui_mask_shift()
+    test_capture_color()
 
     print("\n" + "=" * 60)
     if FAILED:

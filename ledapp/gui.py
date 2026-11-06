@@ -7,14 +7,14 @@ import queue
 import time
 
 from PyQt5.QtCore import Qt, QTimer, QRectF, QTime
-from PyQt5.QtGui import QImage, QPixmap, QPainter, QColor, QPen, QIcon
+from PyQt5.QtGui import QImage, QPixmap, QPainter, QColor, QPen, QIcon, QKeySequence
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QTabWidget, QLabel, QPushButton, QListWidget, QListWidgetItem,
     QSlider, QCheckBox, QComboBox, QDoubleSpinBox, QSpinBox,
     QLineEdit, QPlainTextEdit, QMessageBox, QGroupBox, QProgressBar,
     QApplication, QScrollArea, QSystemTrayIcon, QMenu, QAction, QDialog,
-    QTimeEdit
+    QTimeEdit, QShortcut
 )
 
 from .config import load_config, save_config
@@ -405,6 +405,11 @@ class MainWindow(QMainWindow):
 
         self._build_ui()
         self._build_tray_icon()
+
+        # Ctrl+Q — привычный способ закрыть приложение из окна, когда
+        # крестик настроен на сворачивание в трей.
+        self._quit_shortcut = QShortcut(QKeySequence("Ctrl+Q"), self)
+        self._quit_shortcut.activated.connect(self._quit_from_tray)
 
         self._auto_paused = False
         self._auto_pause_timer = QTimer(self)
