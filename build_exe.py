@@ -54,6 +54,13 @@ def main():
         "--windowed",
         "--name", NAME,
     ]
+    icon_path = os.path.join(APP_DIR, "assets", "icon.ico")
+    if os.path.exists(icon_path):
+        args += ["--icon", icon_path]
+    assets_dir = os.path.join(APP_DIR, "assets")
+    if os.path.isdir(assets_dir):
+        # ресурсы (иконка окна) должны лежать внутри exe
+        args += ["--add-data", f"{assets_dir};assets"]
     if onefile:
         args.append("--onefile")
     for module in HIDDEN_IMPORTS:

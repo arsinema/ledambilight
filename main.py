@@ -10,9 +10,11 @@
 """
 
 import logging
+import os
 import sys
 
 from PyQt5.QtCore import QSharedMemory, Qt
+from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import QApplication, QMessageBox
 
 from ledapp.gui import MainWindow
@@ -20,6 +22,12 @@ from ledapp.logging_setup import setup_logging
 from ledapp.style import APP_STYLESHEET
 
 SINGLE_INSTANCE_KEY = "LedAmbilightELK-SingleInstance"
+
+
+def _resource_path(name):
+    """Путь к ресурсу: рядом с main.py или внутри распакованного .exe."""
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, "assets", name)
 
 
 def _install_excepthook(log):
@@ -48,6 +56,10 @@ def main():
 
     app = QApplication(sys.argv)
     app.setStyleSheet(APP_STYLESHEET)
+
+    icon_path = _resource_path("icon.png")
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QIcon(icon_path))
 
     guard = QSharedMemory(SINGLE_INSTANCE_KEY)
     if not guard.create(1):

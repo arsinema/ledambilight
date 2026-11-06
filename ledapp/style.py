@@ -109,6 +109,22 @@ QPushButton#dangerAction:hover {
     border-color: #854747;
 }
 
+/* Выход из приложения в нижней строке окна — заметная, но не кричащая */
+QPushButton#exitAction {
+    background-color: #2c2e33;
+    border-color: #5a3a3a;
+    color: #e0b4b4;
+    padding: 4px 12px;
+}
+QPushButton#exitAction:hover {
+    background-color: #3a2a2a;
+    border-color: #8a4a4a;
+    color: #ffd0d0;
+}
+QPushButton#exitAction:pressed {
+    background-color: #332525;
+}
+
 /* -- Поля ввода -- */
 QLineEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox, QComboBox {
     background-color: #26272b;

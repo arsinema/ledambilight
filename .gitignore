@@ -12,6 +12,7 @@ mapping_*.json
 # --- Сборка ---
 build/
 dist/
+dist_build/
 *.spec
 
 # --- Python ---

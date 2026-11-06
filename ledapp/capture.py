@@ -40,6 +40,28 @@ except ImportError:
     HAS_WIN_APIS = False
 
 
+def bgra_to_rgb(frame):
+    """Переводит кадр из BGRA/BGR в RGB одним numpy-срезом, без OpenCV.
+
+    dxcam умеет отдавать сразу RGB, но внутри для этого вызывает cv2.cvtColor.
+    В собранном .exe OpenCV нет (и не нужен): захват падал с
+    ModuleNotFoundError: No module named 'cv2', кадры не приходили, лента
+    оставалась чёрной. Поэтому просим у dxcam родной BGRA — он его отдаёт
+    без конвертации — и меняем каналы местами сами.
+
+    Возвращается непрерывный массив uint8 (H, W, 3), пригодный для QImage.
+    """
+    if frame.ndim != 3:
+        return frame
+    if frame.shape[2] == 4:
+        # BGRA -> RGB: B и R меняются местами, альфа-канал отбрасывается
+        return np.ascontiguousarray(frame[:, :, 2::-1])
+    if frame.shape[2] == 3:
+        # BGR -> RGB — на случай, если бэкенд отдал кадр без альфы
+        return np.ascontiguousarray(frame[:, :, ::-1])
+    return frame
+
+
 class ScreenCapture:
     def __init__(self, target_fps=30, backend="dxgi"):
         self.target_fps = target_fps
@@ -66,12 +88,14 @@ class ScreenCapture:
             raise RuntimeError(
                 "dxcam недоступен. Захват экрана работает только на Windows."
             )
-        # Явно запрашиваем RGB, чтобы не зависеть от дефолта библиотеки —
-        # весь код ниже написан в предположении канала R,G,B по порядку.
+        # Родной формат DXGI — BGRA: dxcam отдаёт его как есть, не трогая
+        # цветовые каналы и не импортируя cv2. В RGB переводим сами в
+        # get_frame() — см. bgra_to_rgb(). Если попросить output_color="RGB",
+        # dxcam полезет за cv2, которого в .exe нет, и захват упадёт.
         # max_buffer_len=2: нам нужен только самый свежий кадр (get_latest_frame),
         # а не история — дефолтный большой буфер держит в памяти десятки
         # full-HD кадров и был основной причиной раздутого потребления RAM.
-        self.camera = dxcam.create(output_color="RGB", max_buffer_len=2)
+        self.camera = dxcam.create(output_color="BGRA", max_buffer_len=2)
         if self.camera is None:
             raise RuntimeError("Не удалось создать DXCam (проверьте GPU/драйверы).")
         self.camera.start(target_fps=self.target_fps, video_mode=True)
@@ -84,6 +108,8 @@ class ScreenCapture:
         if not HAS_WGC:
             return False
         try:
+            # WGC конвертирует цвет в своём нативном коде (не через cv2),
+            # поэтому здесь можно сразу просить RGB.
             capture = WindowsCapture(cursor_capture=False, draw_border=None,
                                      output_color="RGB")
             lock = self._wgc_lock
@@ -147,7 +173,9 @@ class ScreenCapture:
         frame = self.camera.get_latest_frame()
         if frame is None:
             return None
-        return np.asarray(frame)
+        # dxcam отдаёт BGRA из переиспользуемого буфера — копируем в RGB,
+        # пока следующий кадр не перезаписал память.
+        return bgra_to_rgb(frame)
 
 
 # Кэш последнего активного окна - GetForegroundWindow() дешёвый вызов, а вот

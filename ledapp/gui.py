@@ -20,7 +20,7 @@ from PyQt5.QtWidgets import (
 from .config import load_config, save_config
 from .worker import LedWorker
 from .audio_engine import list_output_devices, is_available as audio_is_available
-from . import autostart
+from . import autostart, __version__
 
 log = logging.getLogger(__name__)
 
@@ -669,6 +669,26 @@ class MainWindow(QMainWindow):
         # по умолчанию открыта вкладка "Подключение" (индекс 0) — превью не активно,
         # пока пользователь сам не откроет вкладку "Просмотр захвата"
         self.worker.set_preview_active(tabs.currentIndex() == preview_tab_index)
+
+        # Нижняя строка: версия слева, явный «Выход» справа. Крестик окна
+        # по умолчанию только прячет приложение в трей, поэтому нужна
+        # кнопка, которая завершает программу по-настоящему.
+        footer = QHBoxLayout()
+        footer.setContentsMargins(2, 0, 2, 0)
+        self.version_label = QLabel(f"LED Ambilight {__version__}")
+        self.version_label.setStyleSheet("color: #6b6c72; font-size: 11px;")
+        self.version_label.setToolTip("Версия приложения")
+        footer.addWidget(self.version_label)
+        footer.addStretch()
+
+        self.exit_btn = QPushButton("Выход")
+        self.exit_btn.setObjectName("exitAction")
+        self.exit_btn.setToolTip(
+            "Завершить приложение. Крестик в углу окна только сворачивает его в трей."
+        )
+        self.exit_btn.clicked.connect(self._quit_from_tray)
+        footer.addWidget(self.exit_btn)
+        root.addLayout(footer)
 
     # -- Вкладка дежурного режима (дыхание в простое) --
 
