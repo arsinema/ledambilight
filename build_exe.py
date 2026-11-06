@@ -19,6 +19,12 @@ import subprocess
 import sys
 import tempfile
 
+# CI и консоли Windows с cp1252/cp866 не умеют печатать кириллицу —
+# без этого сборка падает с UnicodeEncodeError ещё до PyInstaller.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 NAME = "LEDAmbilight"
 

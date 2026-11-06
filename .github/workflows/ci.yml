@@ -1,4 +1,4 @@
-name: CI
+﻿name: CI
 
 on:
   push:
@@ -15,63 +15,64 @@ concurrency:
 
 jobs:
   selftest:
-    name: Самотест
+    name: РЎР°РјРѕС‚РµСЃС‚
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: requirements.txt
 
-      - name: Установка зависимостей
+      - name: РЈСЃС‚Р°РЅРѕРІРєР° Р·Р°РІРёСЃРёРјРѕСЃС‚РµР№
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Проверка синтаксиса
+      - name: РџСЂРѕРІРµСЂРєР° СЃРёРЅС‚Р°РєСЃРёСЃР°
         run: python -m compileall -q ledapp main.py selftest.py build_exe.py
 
-      - name: Самотест
+      - name: РЎР°РјРѕС‚РµСЃС‚
         run: python selftest.py
 
   build:
-    name: Сборка exe
+    name: РЎР±РѕСЂРєР° exe
     needs: selftest
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
           cache-dependency-path: requirements.txt
 
-      - name: Установка зависимостей
+      - name: РЈСЃС‚Р°РЅРѕРІРєР° Р·Р°РІРёСЃРёРјРѕСЃС‚РµР№
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt pyinstaller
 
-      - name: Сборка
+      - name: РЎР±РѕСЂРєР°
         run: python build_exe.py
 
-      - name: Проверка версии в exe
+      - name: РџСЂРѕРІРµСЂРєР° РІРµСЂСЃРёРё РІ exe
         shell: pwsh
         run: |
           $expected = (python -c "import ledapp; print(ledapp.__version__)").Trim()
           $info = (Get-Item dist/LEDAmbilight.exe).VersionInfo
-          Write-Host "Ожидается: $expected"
+          Write-Host "РћР¶РёРґР°РµС‚СЃСЏ: $expected"
           $info | Format-List ProductName, ProductVersion, FileVersion
           $actual = $info.ProductVersion.Trim()
           if (-not $actual.StartsWith($expected)) {
-            throw "Версия в exe ($actual) не совпадает с __version__ ($expected)"
+            throw "Р’РµСЂСЃРёСЏ РІ exe ($actual) РЅРµ СЃРѕРІРїР°РґР°РµС‚ СЃ __version__ ($expected)"
           }
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: LEDAmbilight-exe
           path: dist/LEDAmbilight.exe
           retention-days: 7
+
