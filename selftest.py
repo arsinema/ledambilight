@@ -43,6 +43,7 @@ from ledapp.color_engine import (
 )
 from ledapp.config import DEFAULT_CONFIG, _deep_merge, _sanitize
 from ledapp.strip_mapper import StripMapper
+from ledapp.updates import is_newer, version_tuple
 from ledapp.wled_controller import WLEDController
 from ledapp.wled_serial_controller import WLEDSerialController
 
@@ -413,6 +414,15 @@ def test_capture_color():
           str(rgb3.tolist()))
 
 
+def test_updates():
+    print("\n[12] Проверка обновлений: сравнение версий")
+    check("v1.2.0 разбирается в (1, 2, 0, 0)",
+          version_tuple("v1.2.0") == (1, 2, 0, 0), str(version_tuple("v1.2.0")))
+    check("1.0.10 новее 1.0.9", is_newer("1.0.10", "1.0.9"))
+    check("1.0.1 не новее 1.0.1", not is_newer("1.0.1", "1.0.1"))
+    check("1.2.0-beta новее 1.1.9", is_newer("1.2.0-beta", "1.1.9"))
+
+
 def main():
     print("=" * 60)
     print("Самотест LED Ambilight")
@@ -429,6 +439,7 @@ def main():
     test_frame_analyzer()
     test_ui_mask_shift()
     test_capture_color()
+    test_updates()
 
     print("\n" + "=" * 60)
     if FAILED:

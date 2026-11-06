@@ -4,6 +4,8 @@
 
     python build_exe.py           # dist/LEDAmbilight.exe  (один файл)
     python build_exe.py --dir     # dist/LEDAmbilight/    (стартует быстрее)
+    python build_exe.py --portable # папка + zip для раздачи
+    python build_exe.py --out DIR  # собрать в DIR/dist (если dist занят)
 
 Что важно знать:
   * PyInstaller не входит в requirements — поставь отдельно:
@@ -15,6 +17,7 @@
 """
 
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -104,8 +107,22 @@ def write_version_file(path):
         f.write(content)
 
 
+def _arg_value(flag):
+    """Значение флага вида `--out DIR` или None."""
+    if flag in sys.argv:
+        index = sys.argv.index(flag)
+        if index + 1 < len(sys.argv):
+            return os.path.abspath(sys.argv[index + 1])
+    return None
+
+
 def main():
-    onefile = "--dir" not in sys.argv
+    portable = "--portable" in sys.argv
+    onefile = not portable and "--dir" not in sys.argv
+    out_dir = _arg_value("--out") or APP_DIR
+    dist_dir = os.path.join(out_dir, "dist")
+    work_dir = os.path.join(out_dir, "build")
+    os.makedirs(dist_dir, exist_ok=True)
 
     import importlib.util
     if importlib.util.find_spec("PyInstaller") is None:
@@ -118,6 +135,9 @@ def main():
         "--noconfirm", "--clean",
         "--windowed",
         "--name", NAME,
+        "--distpath", dist_dir,
+        "--workpath", work_dir,
+        "--specpath", out_dir,
     ]
     icon_path = os.path.join(APP_DIR, "assets", "icon.ico")
     if os.path.exists(icon_path):
@@ -156,14 +176,23 @@ def main():
         return result.returncode
 
     if onefile:
-        exe_path = os.path.join(APP_DIR, "dist", NAME + ".exe")
+        exe_path = os.path.join(dist_dir, NAME + ".exe")
     else:
-        exe_path = os.path.join(APP_DIR, "dist", NAME, NAME + ".exe")
+        exe_path = os.path.join(dist_dir, NAME, NAME + ".exe")
 
     if os.path.exists(exe_path):
         size_mb = os.path.getsize(exe_path) / (1024 * 1024)
         print(f"\nГотово: {exe_path}  ({size_mb:.1f} МБ), версия {APP_VERSION}")
         print("Конфиг создастся рядом с exe при первом запуске.")
+        if portable:
+            zip_base = os.path.join(
+                dist_dir, f"LEDAmbilight-{APP_VERSION}-portable"
+            )
+            zip_path = shutil.make_archive(
+                zip_base, "zip", root_dir=dist_dir, base_dir=NAME
+            )
+            zip_mb = os.path.getsize(zip_path) / (1024 * 1024)
+            print(f"Портативная сборка: {zip_path}  ({zip_mb:.1f} МБ)")
         return 0
 
     print("\nСборка завершилась, но exe не найден — проверь папку dist/")

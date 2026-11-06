@@ -37,27 +37,31 @@ git push origin v1.0.2
 (`.github/workflows/ci.yml`) на этом коммите прогонит самотест и соберёт exe;
 зелёная галочка — обязательное условие для релиза.
 
-## 4. Собрать релизный exe
+## 4. Собрать релизные файлы
 
 Локальная сборка (рекомендуется: она уже проверена на живой ленте):
 
 ```powershell
-python build_exe.py
+python build_exe.py              # dist\LEDAmbilight.exe
+python build_exe.py --portable   # dist\LEDAmbilight-<версия>-portable.zip
 Get-FileHash dist\LEDAmbilight.exe -Algorithm SHA256
+Get-FileHash dist\LEDAmbilight-*-portable.zip -Algorithm SHA256
 ```
 
 ## 5. Создать релиз на GitHub
 
 ```powershell
 $ver = "1.0.2"
-gh release create "v$ver" "dist\LEDAmbilight.exe" `
+gh release create "v$ver" `
+    "dist\LEDAmbilight.exe" `
+    "dist\LEDAmbilight-$ver-portable.zip" `
     --title "LED Ambilight $ver" `
     --notes-file "release-notes-$ver.md" `
     --target master
 ```
 
 В заметках релиза укажи: что исправлено, что нового, требования, порядок
-установки (SmartScreen), SHA-256 файла.
+установки (SmartScreen), SHA-256 обоих файлов.
 
 ## 6. Проверить релиз
 
@@ -65,11 +69,12 @@ gh release create "v$ver" "dist\LEDAmbilight.exe" `
 gh release view "v$ver" -R arsinema/ledambilight --json tagName,assets
 ```
 
-- размер ассета совпадает с локальным файлом;
-- `digest` ассета совпадает с `Get-FileHash`;
+- размер ассетов совпадает с локальными файлами;
+- `digest` ассетов совпадает с `Get-FileHash`;
 - ссылка `https://github.com/arsinema/ledambilight/releases/latest` открывается
   и ведёт на новый релиз;
-- скачанный exe запускается на чистой машине (или хотя бы из другой папки).
+- скачанный exe и распакованный zip запускаются на чистой машине
+  (или хотя бы из другой папки).
 
 ## Если CI упал
 

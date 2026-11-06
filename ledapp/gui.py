@@ -4,10 +4,14 @@
 
 import logging
 import queue
+import threading
 import time
 
-from PyQt5.QtCore import Qt, QTimer, QRectF, QTime
-from PyQt5.QtGui import QImage, QPixmap, QPainter, QColor, QPen, QIcon, QKeySequence
+from PyQt5.QtCore import Qt, QTimer, QRectF, QTime, QUrl, pyqtSignal
+from PyQt5.QtGui import (
+    QImage, QPixmap, QPainter, QColor, QPen, QIcon, QKeySequence,
+    QDesktopServices,
+)
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QTabWidget, QLabel, QPushButton, QListWidget, QListWidgetItem,
@@ -20,6 +24,7 @@ from PyQt5.QtWidgets import (
 from .config import load_config, save_config
 from .worker import LedWorker
 from .audio_engine import list_output_devices, is_available as audio_is_available
+from .updates import check_for_update
 from . import autostart, __version__
 
 log = logging.getLogger(__name__)
@@ -355,6 +360,8 @@ class MappingWizard(QDialog):
 
 
 class MainWindow(QMainWindow):
+    update_checked = pyqtSignal(object)
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("LED Ambilight")
@@ -395,6 +402,9 @@ class MainWindow(QMainWindow):
         self.worker.process_changed.connect(self.on_process_changed)
         self.worker.beat_update.connect(self.on_beat_update)
         self.worker.start()
+
+        self._update_check_running = False
+        self.update_checked.connect(self._on_update_checked)
 
         self.current_profile = "desktop"
         self._really_quit = False
@@ -444,6 +454,11 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(3000, self._check_schedule)
 
         QTimer.singleShot(900, self._maybe_show_welcome)
+
+        if self.config.get("updates", {}).get("check_on_start", True):
+            # Тихо, через 5 секунд после старта: не задерживаем запуск и не
+            # показываем модальное окно, если обновления нет.
+            QTimer.singleShot(5000, lambda: self._on_check_updates(silent=True))
 
         if self.config.get("auto_connect", True):
             # небольшая задержка, чтобы фоновый поток успел стартовать
@@ -3243,6 +3258,33 @@ class MainWindow(QMainWindow):
         ))
         layout.addWidget(mqtt_box)
 
+        # --- обновления ---
+        updates_box = QGroupBox("Обновления")
+        updates_form = QFormLayout(updates_box)
+        updates_cfg = self.config.get("updates", {})
+        updates_cb = QCheckBox("Проверять обновления при запуске")
+        updates_cb.setChecked(updates_cfg.get("check_on_start", True))
+        updates_cb.stateChanged.connect(
+            lambda s: self._set_nested("updates", "check_on_start", s == Qt.Checked)
+        )
+        updates_form.addRow(updates_cb)
+
+        updates_row = QHBoxLayout()
+        self.update_status_label = QLabel(f"Установлена версия {__version__}")
+        self.update_status_label.setStyleSheet("color: #8a8b93;")
+        self.update_status_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        updates_row.addWidget(self.update_status_label)
+        updates_row.addStretch()
+        self.update_btn = QPushButton("Проверить обновления")
+        self.update_btn.clicked.connect(self._on_check_updates)
+        updates_row.addWidget(self.update_btn)
+        updates_form.addRow(updates_row)
+        updates_form.addRow(QLabel(
+            "Приложение спрашивает у GitHub номер последнего релиза.\n"
+            "Наружу уходит только версия в User-Agent, ничего личного."
+        ))
+        layout.addWidget(updates_box)
+
         layout.addStretch()
         return w
 
@@ -3256,6 +3298,74 @@ class MainWindow(QMainWindow):
             self._setup_hotkeys()
         else:
             self.hotkey_filter.set_enabled(True)
+
+    # -- Проверка обновлений --
+
+    def _on_check_updates(self, silent=False):
+        """Запускает проверку в фоне, чтобы не подвешивать интерфейс на 5-6 с."""
+        if self._update_check_running:
+            return
+        self._update_check_running = True
+        self.update_btn.setEnabled(False)
+        if not silent:
+            self.update_status_label.setText("Проверяю обновления...")
+        threading.Thread(
+            target=self._check_updates_worker, args=(bool(silent),), daemon=True
+        ).start()
+
+    def _check_updates_worker(self, silent):
+        info = check_for_update(__version__)
+        try:
+            self.update_checked.emit((info, silent))
+        except RuntimeError:
+            pass  # окно уже закрыли, пока шёл запрос к GitHub
+
+    def _on_update_checked(self, payload):
+        info, silent = payload
+        self._update_check_running = False
+        self.update_btn.setEnabled(True)
+
+        if info is None:
+            if not silent:
+                self.update_status_label.setText("Не удалось проверить обновления")
+            return
+
+        if not info.available:
+            self.update_status_label.setText(
+                f"Установлена последняя версия ({info.current})"
+            )
+            if not silent:
+                QMessageBox.information(
+                    self, "Обновления",
+                    f"Установлена последняя версия: {info.current}.",
+                )
+            return
+
+        self.update_status_label.setText(f"Доступна версия {info.latest}")
+        if silent:
+            # Не мешаем модальным окном: подсветим строку и трей.
+            if getattr(self, "tray_icon", None) is not None:
+                self.tray_icon.showMessage(
+                    "LED Ambilight",
+                    f"Доступна версия {info.latest}. Вкладка «Система» → «Проверить обновления».",
+                    QSystemTrayIcon.Information,
+                    5000,
+                )
+            return
+
+        box = QMessageBox(self)
+        box.setWindowTitle("Доступно обновление")
+        box.setIcon(QMessageBox.Information)
+        box.setText(
+            f"Установлена версия {info.current}, на GitHub уже {info.latest}."
+        )
+        if info.notes:
+            box.setInformativeText(info.notes[:600])
+        open_btn = box.addButton("Открыть релиз", QMessageBox.AcceptRole)
+        box.addButton("Позже", QMessageBox.RejectRole)
+        box.exec_()
+        if box.clickedButton() is open_btn:
+            QDesktopServices.openUrl(QUrl(info.url))
 
     def _apply_scene(self, name):
         """Применяет готовый пресет, выставляя значения виджетов.

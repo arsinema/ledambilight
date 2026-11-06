@@ -192,6 +192,11 @@ DEFAULT_CONFIG = {
         "prefix": "ledambilight"
     },
 
+    # Проверка обновлений на GitHub Releases
+    "updates": {
+        "check_on_start": True
+    },
+
     # Профили захвата
     "profiles": {
         "desktop": {"mode": "quadrants", "smoothing": 0.25, "delay": 0.15},
@@ -360,7 +365,7 @@ _DICT_SECTIONS = (
     "standby", "calibration", "brightness", "hud_mask",
     "filters", "audio", "process_profile_map",
     "adaptive_fps", "power", "auto_pause", "hotkeys", "content", "remote",
-    "lamp", "schedule", "sunrise", "app_scenes", "mqtt",
+    "lamp", "schedule", "sunrise", "app_scenes", "mqtt", "updates",
 )
 
 _INT_RANGES = {
