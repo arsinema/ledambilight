@@ -24,6 +24,12 @@ import sys
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, APP_DIR)
 
+# Консоль Windows и CI-раннеры часто живут в cp1252/cp866: русские строки
+# в print падают с UnicodeEncodeError. Принудительный UTF-8 это лечит.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 import numpy as np
 
 from ledapp.capture import bgra_to_rgb, hud_rect, apply_hud_mask, get_quadrant_color
