@@ -1,0 +1,32 @@
+# --- Личные данные, которые не должны попасть в репозиторий ---
+config.json
+config.json.bak
+config.json.broken
+config.json.tmp
+*.json.broken
+
+# Карты ленты, сделанные под конкретный монитор
+435.json
+mapping_*.json
+
+# --- Сборка ---
+build/
+dist/
+*.spec
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# --- Редакторы и ОС ---
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+
+# --- Логи ---
+*.log
+app.log
