@@ -16,6 +16,7 @@ Priorities are chosen by **impact for the most users / effort**:
 | 6 | Multi-monitor / multi-strip | One strip per monitor edge, or several WLED devices | L |
 | 7 | Phone-camera calibration | Point a phone at the strip; no manual gain/offset guessing | L |
 | 8 | Home Assistant MQTT Discovery | Lights appear in HA automatically, no manual YAML | S–M |
+| 9 | Installer + uninstaller | Non-technical install, Start Menu shortcut, clean removal | M |
 
 ## 1. One-click support bundle
 
@@ -156,6 +157,25 @@ the same LAN, never to a cloud.
 The existing MQTT bridge already has the state; this is mostly topic templates.
 
 **Effort:** S–M. **Impact:** smart-home users.
+
+## 9. Installer + uninstaller
+
+**Problem:** the release is a portable EXE/ZIP. That is great for enthusiasts,
+but “download, put it somewhere, make a shortcut yourself” loses non-technical
+users, and SmartScreen still warns about an unsigned file.
+
+**Idea:** an Inno Setup or NSIS installer:
+
+- installs to `%LOCALAPPDATA%\LedAmbilight` (no admin rights needed);
+- creates a Start Menu shortcut and optional autostart entry;
+- keeps the config in `%APPDATA%` on upgrade;
+- registers an uninstaller that removes the program but keeps the user config
+  unless explicitly asked.
+
+Code signing is a separate, paid step; it would reduce SmartScreen friction but
+is not required for the installer itself.
+
+**Effort:** M. **Impact:** first-time, non-technical users.
 
 ## Good first issues
 
