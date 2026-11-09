@@ -4,12 +4,14 @@
 включая per-user установку в %LOCALAPPDATA%\\Programs\\InnoSetup6.
 
     python build_installer.py
+    python build_installer.py --source H:\ledapp_final\release_160\dist\LEDAmbilight
 
 Перед сборкой должен быть готов onedir-дистрибутив:
 
     python build_exe.py --portable
 """
 
+import argparse
 import os
 import subprocess
 import sys
@@ -17,6 +19,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 ISS = ROOT / "installer" / "LEDAmbilight.iss"
+DEFAULT_SOURCE = ROOT / "dist" / "LEDAmbilight"
 
 
 def find_iscc():
@@ -34,6 +37,13 @@ def find_iscc():
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Собрать установщик LED Ambilight")
+    parser.add_argument(
+        "--source",
+        default=str(DEFAULT_SOURCE),
+        help="папка onedir-сборки (по умолчанию dist\\LEDAmbilight)",
+    )
+    args = parser.parse_args()
     iscc = find_iscc()
     if iscc is None:
         print("ISCC.exe не найден. Установи Inno Setup 6:")
@@ -42,12 +52,16 @@ def main():
     if not ISS.is_file():
         print(f"Нет файла сценария: {ISS}")
         return 1
-    portable = ROOT / "dist" / "LEDAmbilight" / "LEDAmbilight.exe"
+    source = Path(args.source).resolve()
+    portable = source / "LEDAmbilight.exe"
     if not portable.is_file():
-        print("Нет dist\\LEDAmbilight. Сначала: python build_exe.py --portable")
+        print(f"Нет {portable}. Сначала: python build_exe.py --portable")
         return 1
     print(f"ISCC: {iscc}")
-    result = subprocess.run([iscc, str(ISS)], cwd=str(ROOT))
+    print(f"Источник: {source}")
+    result = subprocess.run(
+        [iscc, f"/DMySourceDir={source}", str(ISS)], cwd=str(ROOT)
+    )
     if result.returncode != 0:
         return result.returncode
     installers = sorted((ROOT / "dist" / "installer").glob("LEDAmbilight-*-setup.exe"))

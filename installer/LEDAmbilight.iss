@@ -3,10 +3,16 @@
 ; Requires the onedir build in ..\dist\LEDAmbilight (python build_exe.py --portable).
 
 #define MyAppName "LED Ambilight"
-#define MyAppVersion "1.5.0"
+#define MyAppVersion "1.6.0"
 #define MyAppPublisher "arsinema"
 #define MyAppURL "https://github.com/arsinema/ledambilight"
 #define MyAppExeName "LEDAmbilight.exe"
+
+; Позволяет собрать установщик, пока рабочий onedir занят запущенным приложением:
+; ISCC /DMySourceDir=H:\...\release_160\dist\LEDAmbilight installer\LEDAmbilight.iss
+#ifndef MySourceDir
+#define MySourceDir "..\dist\LEDAmbilight"
+#endif
 
 [Setup]
 AppId={{A7D4C7E1-6E2A-4F4B-9D4A-3B9F0C2E7A11}
@@ -50,7 +56,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Name: "autostart"; Description: "Запускать LED Ambilight при входе в Windows"; GroupDescription: "Автозапуск:"; Flags: unchecked
 
 [Files]
-Source: "..\dist\LEDAmbilight\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#MySourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"

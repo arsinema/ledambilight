@@ -64,6 +64,35 @@ SCENE_PRESETS = {
 }
 
 
+def scene_matches_config(config, name):
+    """Совпадают ли сохранённые настройки с пресетом сцены."""
+    preset = SCENE_PRESETS.get(name)
+    if not preset:
+        return False
+    try:
+        brightness = config.get("brightness", {})
+        filters = config.get("filters", {})
+        audio = config.get("audio", {})
+        return (
+            abs(float(brightness.get("max_scale", 0)) - preset["max_scale"]) < 0.005
+            and int(brightness.get("min_brightness", -1)) == preset["min_brightness"]
+            and abs(float(filters.get("smoothing_min", 0)) - preset["smoothing_min"]) < 0.005
+            and abs(float(filters.get("smoothing_max", 0)) - preset["smoothing_max"]) < 0.005
+            and abs(float(filters.get("dominant_weight", 0)) - preset["dominant_weight"]) < 0.005
+            and audio.get("mode") == preset["audio"]
+        )
+    except (TypeError, ValueError):
+        return False
+
+
+def detect_scene(config):
+    """Определяет сцену по сохранённым значениям (для старых конфигов)."""
+    for name in SCENE_PRESETS:
+        if scene_matches_config(config, name):
+            return name
+    return ""
+
+
 def _slider_row(form, label_text, minv, maxv, initial, on_change, suffix=""):
     """Добавляет в QFormLayout строку 'слайдер + значение', возвращает сам слайдер."""
     row = QHBoxLayout()
@@ -844,6 +873,7 @@ class MainWindow(QMainWindow):
 
         self._build_ui()
         QTimer.singleShot(0, lambda: i18n.translate_tree(self))
+        QTimer.singleShot(0, self._restore_last_scene)
         self._build_tray_icon()
 
         # Ctrl+Q — привычный способ закрыть приложение из окна, когда
@@ -4436,7 +4466,7 @@ class MainWindow(QMainWindow):
         self.close()
         QApplication.quit()
 
-    def _apply_scene(self, name):
+    def _apply_scene(self, name, remember=True):
         """Применяет готовый пресет, выставляя значения виджетов.
 
         Виджеты сами прогоняют изменения через свои обработчики, поэтому
@@ -4467,7 +4497,33 @@ class MainWindow(QMainWindow):
 
         self.status_label.setText(f"Сцена: {name}")
         self._last_scene_name = name
+        if remember:
+            self.config["last_scene"] = name
+            self._queue_save()
         log.info("Применён пресет %s", name)
+
+    def _restore_last_scene(self):
+        """Восстанавливает имя последнего пресета, не трогая ручные правки.
+
+        Настройки сцены уже лежат в конфиге и применяются при старте. Здесь
+        важно только показать, что это за сцена; если пользователь после
+        пресета что-то поправил, его значения остаются как есть.
+        """
+        stored = str(self.config.get("last_scene", "") or "").strip()
+        if stored in SCENE_PRESETS and scene_matches_config(self.config, stored):
+            self._last_scene_name = stored
+            self.status_label.setText(f"Сцена: {stored} (сохранена)")
+            return
+
+        detected = detect_scene(self.config)
+        if detected:
+            self._last_scene_name = detected
+            self.config["last_scene"] = detected
+            self._queue_save()
+            self.status_label.setText(f"Сцена: {detected} (сохранена)")
+            return
+
+        self._last_scene_name = ""
 
     # -- Мастер первого запуска --
 

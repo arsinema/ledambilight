@@ -58,6 +58,7 @@ DEFAULT_CONFIG = {
     "capture_region": None,      # [left, top, width, height] или None = весь экран
     "monitor_index": 0,          # индекс монитора DXGI (0 = основной)
     "language": "ru",            # "ru" или "en"
+    "last_scene": "",            # последний выбранный пресет сцены
 
     "minimize_to_tray": True,     # закрытие окна сворачивает в трей вместо выхода
     "auto_reconnect": True,       # пытаться само-восстанавливать связь при обрыве
@@ -501,6 +502,11 @@ def _sanitize(config):
         if config.get(key) not in allowed:
             log.warning("Недопустимое значение %r=%r, ставлю %r", key, config.get(key), fallback)
             config[key] = fallback
+
+    last_scene = config.get("last_scene", "")
+    if not isinstance(last_scene, str):
+        last_scene = ""
+    config["last_scene"] = last_scene.strip()[:40]
 
     region = config.get("capture_region")
     if region is not None:

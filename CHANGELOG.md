@@ -3,6 +3,17 @@
 Формат — [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 версии — [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [1.6.0] — 2026-11-09
+
+### Добавлено
+
+- **Последняя сцена запоминается.** При выборе «Кино / Игра / Ночь / Яркий
+  день» имя сохраняется в `last_scene`. После запуска приложение определяет
+  сцену по сохранённым настройкам и показывает её в строке статуса, поэтому
+  пресет не нужно выбирать заново. Если после пресета настройки правили
+  вручную, они не перезаписываются.
+- Тест сцен: 3 проверки, всего 13 unit-тестов; самотест 82.
+
 ## [1.5.0] — 2026-11-09
 
 ### Добавлено
@@ -159,6 +170,7 @@
   приходили. Теперь кадр берётся в родном BGRA и переводится в RGB средствами
   numpy (`capture.bgra_to_rgb`).
 
+[1.6.0]: https://github.com/arsinema/ledambilight/releases/tag/v1.6.0
 [1.5.0]: https://github.com/arsinema/ledambilight/releases/tag/v1.5.0
 [1.4.1]: https://github.com/arsinema/ledambilight/releases/tag/v1.4.1
 [1.4.0]: https://github.com/arsinema/ledambilight/releases/tag/v1.4.0

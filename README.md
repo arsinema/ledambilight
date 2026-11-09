@@ -25,6 +25,7 @@ per-LED colors to addressable LED strips:
 - **ELK-BLEDOM** over Bluetooth LE
 - Full-screen LED layout editor: click every LED right where it is on the monitor
 - Profiles, HUD mask, colour calibration, audio-reactive modes, phone remote, MQTT
+- Scene presets; the last scene is remembered and restored on launch
 - Skip the first N LEDs (leave the start of a strip dark) and keep the rest mapped
 - One-click support report (logs + redacted config + mapping) and shareable presets
 - Home Assistant MQTT Discovery: a light entity appears automatically
@@ -46,7 +47,7 @@ Ideas and priorities for future versions: [ROADMAP.md](ROADMAP.md).
 Скачай файл и запусти — конфиг создастся рядом с exe при первом запуске.
 Там же портативный zip: распакуй папку и запусти `LEDAmbilight.exe`
 из неё — этот вариант стартует быстрее и реже вызывает вопросы антивируса.
-Для обычной установки есть `LEDAmbilight-1.5.0-setup.exe`: ярлык в «Пуске»,
+Для обычной установки есть `LEDAmbilight-1.6.0-setup.exe`: ярлык в «Пуске»,
 удаление, опционально автозапуск; права администратора не нужны.
 
 Windows SmartScreen может показать «Неизвестный издатель»: сборка не подписана
@@ -189,7 +190,8 @@ OpenCV для сборки и работы не нужен: dxcam отдаёт �
   движении слайдеров — по ленте видно результат калибровки в реальном времени
 - Минимальная яркость, автоконтроль яркости, общий множитель яркости
 - **Пресеты сцен** «Кино / Игра / Ночь / Яркий день» — один клик ставит
-  яркость, сглаживание и режим звука
+  яркость, сглаживание и режим звука; последняя сцена запоминается и
+  восстанавливается при запуске
 - **Ограничение по току** — мягкое приглушение кадра, если оценка потребления
   превышает возможности блока питания
 - HUD-маска — обрезка краёв экрана от анализа (интерфейс/оверлеи).
@@ -313,7 +315,8 @@ OpenCV для сборки и работы не нужен: dxcam отдаёт �
 
 **Сцены и автоматизация**
 - **Пресеты сцен** «Кино / Игра / Ночь / Яркий день» — один клик ставит
-  яркость, сглаживание и режим звука
+  яркость, сглаживание и режим звука; последняя сцена запоминается и
+  восстанавливается при запуске
 - **Сцены для приложений**: «cs2.exe = Игра» — при активации окна сцена
   включается сама (кнопка «Привязать активное окно»)
 - **Расписание**: днём одна сцена, ночью другая, по времени
