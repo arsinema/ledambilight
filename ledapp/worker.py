@@ -255,6 +255,10 @@ class LedWorker(QThread):
         self._queue.put(("set_strip_mapper",
                          (led_path, screen_width, screen_height, exact_positions, led_count)))
 
+    def clear_strip_mapping(self):
+        """Сбрасывает маппинг: после смены монитора старые координаты неверны."""
+        self._queue.put(("clear_strip_mapping", None))
+
     def mapping_snapshot(self):
         """Копия текущего маппинга для отчёта поддержки (без изменения состояния)."""
         mapper = self.strip_mapper
@@ -425,6 +429,9 @@ class LedWorker(QThread):
             self._apply_target_fps(payload)
             self._apply_sample_width(payload)
 
+        elif cmd == "clear_strip_mapping":
+            self._clear_mapping()
+
         elif cmd == "scan":
             # Сканирование BLE занимает до 5 секунд - выносим в задачу,
             # чтобы кадры на ленту продолжали уходить
@@ -456,6 +463,7 @@ class LedWorker(QThread):
                         target_fps=self.config.get("target_fps", 30),
                         backend=self.config.get("capture_backend", "dxgi"),
                         region=self.config.get("capture_region"),
+                        monitor_index=self.config.get("monitor_index", 0),
                     )
                     self._capture.start()
                 self.capture_enabled = True
@@ -850,6 +858,7 @@ class LedWorker(QThread):
                 target_fps=new_fps,
                 backend=self.config.get("capture_backend", "dxgi"),
                 region=self.config.get("capture_region"),
+                monitor_index=self.config.get("monitor_index", 0),
             )
             self._capture.start()
             self._smoothed_pixels = None
@@ -1030,6 +1039,18 @@ class LedWorker(QThread):
     # ------------------------------------------------------------------
     # Маппинг ленты
     # ------------------------------------------------------------------
+
+    def _clear_mapping(self):
+        """Пустой маппинг: старые координаты после смены монитора не используем."""
+        try:
+            width = int(self.config.get("screen_width", 1920))
+            height = int(self.config.get("screen_height", 1080))
+        except (TypeError, ValueError):
+            width, height = 1920, 1080
+        self.strip_mapper = StripMapper(1, max(1, width), max(1, height))
+        self._smoothed_pixels = None
+        self._emit_mapping_boxes()
+        self.status_changed.emit("Маппинг сброшен после смены монитора — построй заново")
 
     async def _apply_strip_mapper(self, payload):
         led_path, screen_width, screen_height, exact_positions, led_count = payload

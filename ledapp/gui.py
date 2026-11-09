@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import queue
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -23,7 +24,7 @@ from PyQt5.QtWidgets import (
     QSlider, QCheckBox, QComboBox, QDoubleSpinBox, QSpinBox,
     QLineEdit, QPlainTextEdit, QMessageBox, QGroupBox, QProgressBar,
     QApplication, QScrollArea, QSystemTrayIcon, QMenu, QAction, QDialog,
-    QTimeEdit, QShortcut
+    QTimeEdit, QShortcut, QProgressDialog
 )
 
 from .config import load_config, save_config
@@ -32,7 +33,7 @@ from .audio_engine import list_output_devices, is_available as audio_is_availabl
 from .updates import check_for_update
 from .support_bundle import build_report, default_report_name
 from .presets import apply_preset, export_preset, mapping_payload, validate_preset
-from . import autostart, i18n, __version__
+from . import autostart, i18n, updater, __version__
 
 log = logging.getLogger(__name__)
 
@@ -779,6 +780,8 @@ class CaptureRegionSelector(QDialog):
 
 class MainWindow(QMainWindow):
     update_checked = pyqtSignal(object)
+    update_download_progress = pyqtSignal(int, int)
+    update_download_finished = pyqtSignal(object, object, object)
 
     def __init__(self):
         super().__init__()
@@ -824,6 +827,12 @@ class MainWindow(QMainWindow):
 
         self._update_check_running = False
         self.update_checked.connect(self._on_update_checked)
+        self.update_download_progress.connect(self._on_update_download_progress)
+        self.update_download_finished.connect(self._on_update_download_finished)
+        self._update_progress_dialog = None
+        self._update_cancel = None
+        self._update_temp_dir = None
+        self._update_info = None
         self._report_pending = None
 
         self.current_profile = "desktop"
@@ -985,13 +994,43 @@ class MainWindow(QMainWindow):
             self._on_start_capture_clicked()
         self.status_label.setText("Подсветка возобновлена")
 
-    def _detect_screen_size(self):
-        """Подхватывает реальное разрешение основного монитора.
+    def _monitor_entries(self):
+        """Список мониторов в порядке Qt/DXGI: (index, name, width, height, primary)."""
+        entries = []
+        for index, screen in enumerate(QApplication.screens()):
+            ratio = screen.devicePixelRatio() or 1.0
+            size = screen.size()
+            name = (screen.name() or "").replace("\\\\.\\", "")
+            entries.append({
+                "index": index,
+                "name": name or f"Монитор {index + 1}",
+                "width": int(round(size.width() * ratio)),
+                "height": int(round(size.height() * ratio)),
+                "primary": screen == QApplication.primaryScreen(),
+            })
+        return entries
 
-        Раньше screen_width/screen_height были жёстко 1920x1080 из конфига:
-        на другом мониторе холст разметки ленты имел неверные пропорции, а
-        диоды вставали не туда."""
-        screen = QApplication.primaryScreen()
+    def _selected_screen(self):
+        screens = QApplication.screens()
+        if not screens:
+            return None
+        try:
+            index = int(self.config.get("monitor_index", 0))
+        except (TypeError, ValueError):
+            index = 0
+        if index < 0 or index >= len(screens):
+            index = 0
+            self.config["monitor_index"] = 0
+            self._queue_save()
+        return screens[index]
+
+    def _detect_screen_size(self):
+        """Подхватывает реальное разрешение выбранного монитора.
+
+        screen_width/screen_height задают систему координат маппинга: при
+        выборе второго монитора холст и диоды должны считать от его размера,
+        а не от primary-экрана."""
+        screen = self._selected_screen()
         if screen is None:
             return
         ratio = screen.devicePixelRatio() or 1.0
@@ -3126,6 +3165,26 @@ class MainWindow(QMainWindow):
             except Exception:
                 return None
 
+    def _on_monitor_changed(self, index):
+        value = self.monitor_combo.itemData(index)
+        if value is None:
+            return
+        try:
+            value = int(value)
+        except (TypeError, ValueError):
+            return
+        if value == int(self.config.get("monitor_index", 0) or 0):
+            return
+        self._set_top("monitor_index", value)
+        self._detect_screen_size()
+        if self.config.get("capture_region"):
+            self._set_top("capture_region", None)
+            self.capture_region_label.setText(self._capture_region_text())
+        self.worker.update_config(self.config)
+        self.worker.clear_strip_mapping()
+        self.status_label.setText("Монитор выбран — построй маппинг заново")
+        self._restart_capture_for_region()
+
     def _capture_region_text(self):
         region = self.config.get("capture_region")
         english = i18n.current_language() == "en"
@@ -3141,7 +3200,7 @@ class MainWindow(QMainWindow):
 
     def _on_select_capture_region(self):
         """Полноэкранный выбор области; координаты — в пикселях экрана."""
-        screen = QApplication.primaryScreen()
+        screen = self._selected_screen() or QApplication.primaryScreen()
         if screen is None:
             QMessageBox.warning(self, "Захват экрана", "Не удалось получить доступ к экрану")
             return
@@ -3155,6 +3214,11 @@ class MainWindow(QMainWindow):
             self.config.get("screen_height", 1080),
             self,
         )
+        try:
+            selector.setScreen(screen)
+            selector.setGeometry(screen.geometry())
+        except Exception:
+            log.debug("Не удалось перевести выбор области на выбранный монитор", exc_info=True)
         selector.showFullScreen()
         accepted = selector.exec_() == QDialog.Accepted
         region = selector.region if accepted else None
@@ -3189,7 +3253,7 @@ class MainWindow(QMainWindow):
 
     def _on_fullscreen_manual_points(self):
         """Открывает расстановку диодов на весь монитор, без панели задач."""
-        screen = QApplication.primaryScreen()
+        screen = self._selected_screen() or QApplication.primaryScreen()
         if screen is None:
             QMessageBox.warning(self, "Расстановка", "Не удалось получить экран")
             return
@@ -3858,6 +3922,30 @@ class MainWindow(QMainWindow):
         ))
         layout.addWidget(remote_box)
 
+        # --- монитор ---
+        monitor_box = QGroupBox("Монитор")
+        monitor_form = QFormLayout(monitor_box)
+        self.monitor_combo = QComboBox()
+        for entry in self._monitor_entries():
+            suffix = " (основной)" if entry["primary"] else ""
+            self.monitor_combo.addItem(
+                f"{entry['name']} — {entry['width']}×{entry['height']}{suffix}",
+                entry["index"],
+            )
+        try:
+            current_monitor = int(self.config.get("monitor_index", 0) or 0)
+        except (TypeError, ValueError):
+            current_monitor = 0
+        monitor_pos = self.monitor_combo.findData(current_monitor)
+        self.monitor_combo.setCurrentIndex(monitor_pos if monitor_pos >= 0 else 0)
+        self.monitor_combo.currentIndexChanged.connect(self._on_monitor_changed)
+        monitor_form.addRow("Захватывать монитор:", self.monitor_combo)
+        monitor_form.addRow(QLabel(
+            "Для второго монитора: выбери его здесь и построй маппинг заново.\n"
+            "Координаты диодов считаются от выбранного монитора."
+        ))
+        layout.addWidget(monitor_box)
+
         # --- область захвата ---
         capture_region_box = QGroupBox("Захват экрана")
         capture_region_form = QFormLayout(capture_region_box)
@@ -4232,11 +4320,121 @@ class MainWindow(QMainWindow):
         )
         if info.notes:
             box.setInformativeText(info.notes[:600])
+        update_btn = None
+        if updater.can_self_update(info):
+            update_btn = box.addButton("Скачать и обновить", QMessageBox.AcceptRole)
         open_btn = box.addButton("Открыть релиз", QMessageBox.AcceptRole)
         box.addButton("Позже", QMessageBox.RejectRole)
         box.exec_()
-        if box.clickedButton() is open_btn:
+        if update_btn is not None and box.clickedButton() is update_btn:
+            self._start_update_download(info)
+        elif box.clickedButton() is open_btn:
             QDesktopServices.openUrl(QUrl(info.url))
+
+    def _start_update_download(self, info):
+        """Скачивает exe обновления в фоне с прогрессом и отменой."""
+        if self._update_progress_dialog is not None:
+            return
+        self._update_info = info
+        self._update_cancel = threading.Event()
+        self._update_temp_dir = tempfile.mkdtemp(prefix="ledambilight-update-")
+        dialog = QProgressDialog("Скачивание обновления…", "Отмена", 0, 100, self)
+        dialog.setWindowTitle("Обновление")
+        dialog.setWindowModality(Qt.WindowModal)
+        dialog.setAutoClose(False)
+        dialog.setAutoReset(False)
+        dialog.setMinimumDuration(0)
+        dialog.canceled.connect(self._cancel_update_download)
+        self._update_progress_dialog = dialog
+        dialog.show()
+        threading.Thread(
+            target=self._download_update_worker,
+            args=(info, self._update_temp_dir, self._update_cancel),
+            daemon=True,
+        ).start()
+
+    def _download_update_worker(self, info, temp_dir, cancel):
+        try:
+            path = updater.download_update(
+                info,
+                temp_dir,
+                progress=lambda done, total: self.update_download_progress.emit(done, total),
+                cancel=cancel,
+            )
+            self.update_download_finished.emit(path, None, info)
+        except updater.UpdateCancelled as exc:
+            self.update_download_finished.emit(None, exc, info)
+        except Exception as exc:
+            self.update_download_finished.emit(None, exc, info)
+
+    def _cancel_update_download(self):
+        if self._update_cancel is not None:
+            self._update_cancel.set()
+        if self._update_progress_dialog is not None:
+            self._update_progress_dialog.setLabelText("Отмена загрузки…")
+
+    def _on_update_download_progress(self, done, total):
+        dialog = self._update_progress_dialog
+        if dialog is None:
+            return
+        if total > 0:
+            dialog.setMaximum(total)
+            dialog.setValue(min(done, total))
+            dialog.setLabelText(
+                f"Скачивание обновления… {done / (1024 * 1024):.1f} / "
+                f"{total / (1024 * 1024):.1f} МБ"
+            )
+        else:
+            dialog.setLabelText(f"Скачивание обновления… {done / (1024 * 1024):.1f} МБ")
+
+    def _on_update_download_finished(self, path, error, info):
+        dialog = self._update_progress_dialog
+        self._update_progress_dialog = None
+        if dialog is not None:
+            dialog.close()
+            dialog.deleteLater()
+        self._update_cancel = None
+
+        if error is not None:
+            if self._update_temp_dir:
+                shutil.rmtree(self._update_temp_dir, ignore_errors=True)
+            self._update_temp_dir = None
+            if isinstance(error, updater.UpdateCancelled):
+                self.status_label.setText("Загрузка обновления отменена")
+            else:
+                log.error("Не удалось скачать обновление: %s", error)
+                QMessageBox.critical(
+                    self, "Обновление", f"Не удалось скачать обновление:\n{error}"
+                )
+            return
+
+        answer = QMessageBox.question(
+            self, "Обновление скачано",
+            f"Версия {info.latest} скачана и проверена по SHA-256.\n\n"
+            f"Перезапустить приложение и установить обновление сейчас?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        )
+        if answer != QMessageBox.Yes:
+            if self._update_temp_dir:
+                shutil.rmtree(self._update_temp_dir, ignore_errors=True)
+            self._update_temp_dir = None
+            self.status_label.setText("Обновление не установлено")
+            return
+
+        try:
+            updater.apply_self_update(path)
+        except Exception as exc:
+            log.exception("Не удалось запустить автообновление")
+            QMessageBox.critical(
+                self, "Обновление", f"Не удалось запустить обновление:\n{exc}"
+            )
+            return
+        self._update_temp_dir = None
+        self.status_label.setText("Приложение перезапустится для обновления…")
+        self._really_quit = True
+        self.close()
+        QApplication.quit()
 
     def _apply_scene(self, name):
         """Применяет готовый пресет, выставляя значения виджетов.

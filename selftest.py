@@ -45,7 +45,8 @@ from ledapp.config import DEFAULT_CONFIG, _deep_merge, _sanitize
 from ledapp.presets import apply_preset, export_preset, validate_preset
 from ledapp.strip_mapper import StripMapper
 from ledapp.support_bundle import redact_config, redact_text
-from ledapp.updates import is_newer, version_tuple
+from ledapp.updates import ReleaseAsset, UpdateInfo, is_newer, version_tuple
+from ledapp import updater
 from ledapp.win_utils import is_fullscreen_app
 from ledapp.wled_controller import WLEDController
 from ledapp.wled_serial_controller import WLEDSerialController
@@ -239,6 +240,7 @@ def test_config():
     broken["led_start_offset"] = -3
     broken["strip_density"] = "abc"
     broken["capture_region"] = [-50, -50, 99999, 99999]
+    broken["monitor_index"] = -1
     broken["language"] = "de"
     broken["profiles"] = {"desktop": "мусор"}
     broken["game_processes"] = "cs2.exe"
@@ -254,6 +256,7 @@ def test_config():
           and fixed["capture_region"][3] <= fixed["screen_height"],
           str(fixed["capture_region"]))
     check("неизвестный язык чинится на русский", fixed["language"] == "ru", str(fixed["language"]))
+    check("отрицательный индекс монитора чинится", fixed["monitor_index"] == 0, str(fixed["monitor_index"]))
     check("мусорная плотность чинится", fixed["strip_density"] == 30, str(fixed["strip_density"]))
     check("битый профиль заменяется дефолтным",
           isinstance(fixed["profiles"].get("desktop"), dict))
@@ -438,6 +441,37 @@ def test_updates():
     check("1.2.0-beta новее 1.1.9", is_newer("1.2.0-beta", "1.1.9"))
 
 
+def test_updater():
+    print("\n[12b] Автообновление")
+    good = ReleaseAsset(
+        "LEDAmbilight.exe",
+        "https://github.com/arsinema/ledambilight/releases/download/v1.5.0/LEDAmbilight.exe",
+        100, "a" * 64,
+    )
+    info = UpdateInfo("1.4.1", "1.5.0", True, "url", assets=(good,))
+    check("ассет LEDAmbilight.exe находится", updater.select_asset(info) is good)
+    try:
+        updater._validate_asset(good)
+        valid = True
+    except updater.UpdateError:
+        valid = False
+    check("корректный ассет проходит проверку", valid)
+    bad_host = ReleaseAsset(good.name, "https://evil.example/x.exe", 100, "a" * 64)
+    try:
+        updater._validate_asset(bad_host)
+        rejected = False
+    except updater.UpdateError:
+        rejected = True
+    check("чужой хост отклоняется", rejected)
+    script = updater.build_update_script(
+        r"C:\Apps\LEDAmbilight.exe", r"C:\Temp\LEDAmbilight.exe", r"C:\Temp\u.ps1"
+    )
+    check("в скрипте есть откат и перезапуск",
+          "Copy-Item" in script and "$old" in script and "Start-Process" in script)
+    check("из исходников самообновление выключено",
+          updater.app_distribution() == "source" and not updater.self_update_supported())
+
+
 def test_autopause_media():
     print("\n[13] Автопауза и просмотр видео")
     check("полноэкранный режим определяется как bool",
@@ -506,6 +540,7 @@ def main():
     test_ui_mask_shift()
     test_capture_color()
     test_updates()
+    test_updater()
     test_autopause_media()
     test_support_and_presets()
 

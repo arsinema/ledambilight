@@ -56,6 +56,7 @@ DEFAULT_CONFIG = {
     "sample_width": 10,          # размер области выборки одного диода, px (5-40)
     "capture_backend": "dxgi",   # "dxgi" (быстрый) или "wgc" (работает в HDR/эксклюзивном полноэкране)
     "capture_region": None,      # [left, top, width, height] или None = весь экран
+    "monitor_index": 0,          # индекс монитора DXGI (0 = основной)
     "language": "ru",            # "ru" или "en"
 
     "minimize_to_tray": True,     # закрытие окна сворачивает в трей вместо выхода
@@ -392,6 +393,7 @@ _INT_RANGES = {
     "wled_port": (1, 65535, 21324),
     "wled_led_count": (1, 1000, 90),
     "led_start_offset": (0, 999, 0),
+    "monitor_index": (0, 15, 0),
     "wled_serial_baud": (9600, 2000000, 115200),
     "screen_width": (320, 16384, 1920),
     "screen_height": (240, 16384, 1080),

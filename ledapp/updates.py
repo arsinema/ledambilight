@@ -22,12 +22,21 @@ TIMEOUT = 6.0
 
 
 @dataclass(frozen=True)
+class ReleaseAsset:
+    name: str
+    url: str
+    size: int = 0
+    sha256: str = ""
+
+
+@dataclass(frozen=True)
 class UpdateInfo:
     current: str
     latest: str
     available: bool
     url: str
     notes: str = ""
+    assets: tuple = ()
 
 
 def version_tuple(value):
@@ -67,10 +76,27 @@ def check_for_update(current=None, timeout=TIMEOUT):
         log.warning("GitHub не вернул tag_name в последнем релизе")
         return None
 
+    assets = []
+    for item in payload.get("assets") or []:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        url = str(item.get("browser_download_url") or "").strip()
+        if not name or not url:
+            continue
+        digest = str(item.get("digest") or "")
+        sha256 = digest.split(":", 1)[1].lower() if digest.lower().startswith("sha256:") else ""
+        try:
+            size = int(item.get("size") or 0)
+        except (TypeError, ValueError):
+            size = 0
+        assets.append(ReleaseAsset(name=name, url=url, size=size, sha256=sha256))
+
     return UpdateInfo(
         current=current,
         latest=latest,
         available=is_newer(latest, current),
         url=payload.get("html_url") or FALLBACK_URL,
         notes=payload.get("body") or "",
+        assets=tuple(assets),
     )

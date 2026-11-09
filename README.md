@@ -28,8 +28,9 @@ per-LED colors to addressable LED strips:
 - Skip the first N LEDs (leave the start of a strip dark) and keep the rest mapped
 - One-click support report (logs + redacted config + mapping) and shareable presets
 - Home Assistant MQTT Discovery: a light entity appears automatically
-- Capture a selected window/region; English UI with a language switch
+- Capture a selected window/region or monitor; English UI with a language switch
 - Windows installer (per-user, Start Menu shortcut, uninstaller)
+- In-app updater for the single-exe build: SHA-256 check and rollback
 
 You need an addressable strip (WS2812B/SK6812) and a 5 V power supply. Download
 the portable EXE or ZIP from
@@ -45,7 +46,7 @@ Ideas and priorities for future versions: [ROADMAP.md](ROADMAP.md).
 Скачай файл и запусти — конфиг создастся рядом с exe при первом запуске.
 Там же портативный zip: распакуй папку и запусти `LEDAmbilight.exe`
 из неё — этот вариант стартует быстрее и реже вызывает вопросы антивируса.
-Для обычной установки есть `LEDAmbilight-1.4.1-setup.exe`: ярлык в «Пуске»,
+Для обычной установки есть `LEDAmbilight-1.5.0-setup.exe`: ярлык в «Пуске»,
 удаление, опционально автозапуск; права администратора не нужны.
 
 Windows SmartScreen может показать «Неизвестный издатель»: сборка не подписана
@@ -273,15 +274,20 @@ OpenCV для сборки и работы не нужен: dxcam отдаёт �
 - **Кнопка «Выход»** в нижней строке окна завершает приложение сразу, даже если
   включено «Сворачивать в трей при закрытии»: крестик по-прежнему только
   прячет окно, а кнопка и пункт «Выход» в меню трея закрывают программу
-- **Проверка обновлений** (вкладка «Система»): приложение спрашивает у GitHub
-  номер последнего релиза и показывает, доступна ли новая версия. Проверку при
-  запуске можно выключить; наружу уходит только версия в User-Agent
+- **Проверка и установка обновлений** (вкладка «Система»): приложение
+  спрашивает у GitHub номер последнего релиза. Для onefile-сборки кнопка
+  «Скачать и обновить» скачивает exe, проверяет SHA-256, показывает прогресс и
+  после перезапуска подменяет файл с откатом при ошибке. Для portable/установки
+  открывается страница релиза. Проверку при запуске можно выключить; наружу
+  уходит только версия в User-Agent
 - **Отчёт для поддержки** (вкладка «Система»): ZIP с логами, конфигом без
   IP/MAC, текущим маппингом и диагностикой — приложи его к issue
 - **Пресеты `.ledpreset`**: экспорт/импорт сцен, калибровки, фильтров и
   маппинга; сетевые настройки в пресет не попадают
 - **Захват окна или области**: протяни прямоугольник в «Система» → «Захват
   экрана», и анализируется только он; «Весь экран» возвращает обычный режим
+- **Выбор монитора**: «Система» → «Монитор» — второй экран захватывается
+  отдельно, координаты диодов считаются от его разрешения
 - **Английский интерфейс**: переключатель «Язык / Language» в «Системе»
 - **Установщик Windows**: установка без прав администратора, ярлык в «Пуске»,
   удаление; портативный zip и одиночный exe остаются
@@ -348,6 +354,7 @@ ledapp/capture.py            — захват экрана, зоны/квадр�
 ledapp/color_engine.py       — калибровка, фильтры, сглаживание, доминантный цвет
 ledapp/worker.py             — фоновый поток (asyncio) + Qt-сигналы
 ledapp/updates.py            — проверка обновлений через GitHub Releases
+ledapp/updater.py            — скачивание, SHA-256 и подмена exe с откатом
 ledapp/support_bundle.py     — ZIP-отчёт для поддержки (логи, конфиг, маппинг)
 ledapp/presets.py            — экспорт/импорт пресетов настроек и маппинга
 ledapp/i18n.py               — переключение языка и перевод виджетов
