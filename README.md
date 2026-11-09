@@ -28,7 +28,7 @@ per-LED colors to addressable LED strips:
 - Skip the first N LEDs (leave the start of a strip dark) and keep the rest mapped
 - One-click support report (logs + redacted config + mapping) and shareable presets
 - Home Assistant MQTT Discovery: a light entity appears automatically
-- Capture a selected window/region; English UI with a language switch
+- Capture a selected window/region or monitor; English UI with a language switch
 - Windows installer (per-user, Start Menu shortcut, uninstaller)
 - In-app updater for the single-exe build: SHA-256 check and rollback
 
@@ -286,6 +286,8 @@ OpenCV для сборки и работы не нужен: dxcam отдаёт �
   маппинга; сетевые настройки в пресет не попадают
 - **Захват окна или области**: протяни прямоугольник в «Система» → «Захват
   экрана», и анализируется только он; «Весь экран» возвращает обычный режим
+- **Выбор монитора**: «Система» → «Монитор» — второй экран захватывается
+  отдельно, координаты диодов считаются от его разрешения
 - **Английский интерфейс**: переключатель «Язык / Language» в «Системе»
 - **Установщик Windows**: установка без прав администратора, ярлык в «Пуске»,
   удаление; портативный zip и одиночный exe остаются

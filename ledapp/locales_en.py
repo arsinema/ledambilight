@@ -621,3 +621,12 @@ CATALOG.update({
     'Скачать и обновить': 'Download and update',
     'Скачивание обновления…': 'Downloading update…',
 })
+
+CATALOG.update({
+    '(основной)': '(primary)',
+    'Для второго монитора: выбери его здесь и построй маппинг заново.\nКоординаты диодов считаются от выбранного монитора.': 'For a second monitor: select it here and rebuild the mapping.\nLED coordinates are relative to the selected monitor.',
+    'Захватывать монитор:': 'Capture monitor:',
+    'Маппинг сброшен после смены монитора — построй заново': 'Mapping cleared after monitor change — rebuild it',
+    'Монитор': 'Monitor',
+    'Монитор выбран — построй маппинг заново': 'Monitor selected — rebuild the mapping',
+})

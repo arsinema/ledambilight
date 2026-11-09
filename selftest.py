@@ -240,6 +240,7 @@ def test_config():
     broken["led_start_offset"] = -3
     broken["strip_density"] = "abc"
     broken["capture_region"] = [-50, -50, 99999, 99999]
+    broken["monitor_index"] = -1
     broken["language"] = "de"
     broken["profiles"] = {"desktop": "мусор"}
     broken["game_processes"] = "cs2.exe"
@@ -255,6 +256,7 @@ def test_config():
           and fixed["capture_region"][3] <= fixed["screen_height"],
           str(fixed["capture_region"]))
     check("неизвестный язык чинится на русский", fixed["language"] == "ru", str(fixed["language"]))
+    check("отрицательный индекс монитора чинится", fixed["monitor_index"] == 0, str(fixed["monitor_index"]))
     check("мусорная плотность чинится", fixed["strip_density"] == 30, str(fixed["strip_density"]))
     check("битый профиль заменяется дефолтным",
           isinstance(fixed["profiles"].get("desktop"), dict))

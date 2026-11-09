@@ -63,9 +63,10 @@ def bgra_to_rgb(frame):
 
 
 class ScreenCapture:
-    def __init__(self, target_fps=30, backend="dxgi", region=None):
+    def __init__(self, target_fps=30, backend="dxgi", region=None, monitor_index=0):
         self.target_fps = target_fps
         self.backend = backend
+        self.monitor_index = max(0, int(monitor_index or 0))
         self.region = None
         if region:
             try:
@@ -83,13 +84,15 @@ class ScreenCapture:
     # ------------------------------------------------------------------
 
     def start(self):
-        if self.backend == "wgc":
+        if self.backend == "wgc" and self.monitor_index == 0:
             if self._start_wgc():
                 log.info("Захват экрана: WGC%s", " (область)" if self.region else "")
                 return
             log.warning("WGC недоступен или не умеет область, переключаюсь на DXGI")
         self._start_dxgi()
-        log.info("Захват экрана: DXGI%s", f", область {self.region}" if self.region else "")
+        monitor = f", монитор {self.monitor_index}" if self.monitor_index else ""
+        region = f", область {self.region}" if self.region else ""
+        log.info("Захват экрана: DXGI%s%s", monitor, region)
 
     def _start_dxgi(self):
         if dxcam is None:
@@ -108,7 +111,10 @@ class ScreenCapture:
             left, top, width, height = self.region
             region = (left, top, left + width, top + height)
         self.camera = dxcam.create(
-            output_color="BGRA", max_buffer_len=2, region=region
+            output_idx=self.monitor_index,
+            output_color="BGRA",
+            max_buffer_len=2,
+            region=region,
         )
         if self.camera is None:
             raise RuntimeError("Не удалось создать DXCam (проверьте GPU/драйверы).")
@@ -118,10 +124,10 @@ class ScreenCapture:
         """Пробует поднять захват через Windows Graphics Capture.
 
         Любая ошибка здесь не фатальна: вызывающий код откатится на DXGI.
-        WGC в этой сборке не умеет произвольную область, поэтому при
-        выбранной области сразу отдаём False.
+        WGC в этой сборке не умеет произвольную область или второй монитор,
+        поэтому в этих случаях сразу отдаём False.
         """
-        if self.region is not None:
+        if self.region is not None or self.monitor_index != 0:
             return False
         if not HAS_WGC:
             return False

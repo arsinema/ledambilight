@@ -994,13 +994,43 @@ class MainWindow(QMainWindow):
             self._on_start_capture_clicked()
         self.status_label.setText("Подсветка возобновлена")
 
-    def _detect_screen_size(self):
-        """Подхватывает реальное разрешение основного монитора.
+    def _monitor_entries(self):
+        """Список мониторов в порядке Qt/DXGI: (index, name, width, height, primary)."""
+        entries = []
+        for index, screen in enumerate(QApplication.screens()):
+            ratio = screen.devicePixelRatio() or 1.0
+            size = screen.size()
+            name = (screen.name() or "").replace("\\\\.\\", "")
+            entries.append({
+                "index": index,
+                "name": name or f"Монитор {index + 1}",
+                "width": int(round(size.width() * ratio)),
+                "height": int(round(size.height() * ratio)),
+                "primary": screen == QApplication.primaryScreen(),
+            })
+        return entries
 
-        Раньше screen_width/screen_height были жёстко 1920x1080 из конфига:
-        на другом мониторе холст разметки ленты имел неверные пропорции, а
-        диоды вставали не туда."""
-        screen = QApplication.primaryScreen()
+    def _selected_screen(self):
+        screens = QApplication.screens()
+        if not screens:
+            return None
+        try:
+            index = int(self.config.get("monitor_index", 0))
+        except (TypeError, ValueError):
+            index = 0
+        if index < 0 or index >= len(screens):
+            index = 0
+            self.config["monitor_index"] = 0
+            self._queue_save()
+        return screens[index]
+
+    def _detect_screen_size(self):
+        """Подхватывает реальное разрешение выбранного монитора.
+
+        screen_width/screen_height задают систему координат маппинга: при
+        выборе второго монитора холст и диоды должны считать от его размера,
+        а не от primary-экрана."""
+        screen = self._selected_screen()
         if screen is None:
             return
         ratio = screen.devicePixelRatio() or 1.0
@@ -3135,6 +3165,23 @@ class MainWindow(QMainWindow):
             except Exception:
                 return None
 
+    def _on_monitor_changed(self, index):
+        value = self.monitor_combo.itemData(index)
+        if value is None:
+            return
+        try:
+            value = int(value)
+        except (TypeError, ValueError):
+            return
+        if value == int(self.config.get("monitor_index", 0) or 0):
+            return
+        self._set_top("monitor_index", value)
+        self._detect_screen_size()
+        self.worker.update_config(self.config)
+        self.worker.clear_strip_mapping()
+        self.status_label.setText("Монитор выбран — построй маппинг заново")
+        self._restart_capture_for_region()
+
     def _capture_region_text(self):
         region = self.config.get("capture_region")
         english = i18n.current_language() == "en"
@@ -3866,6 +3913,30 @@ class MainWindow(QMainWindow):
             "Сервер слушает локальную сеть: любой в ней сможет управлять подсветкой."
         ))
         layout.addWidget(remote_box)
+
+        # --- монитор ---
+        monitor_box = QGroupBox("Монитор")
+        monitor_form = QFormLayout(monitor_box)
+        self.monitor_combo = QComboBox()
+        for entry in self._monitor_entries():
+            suffix = " (основной)" if entry["primary"] else ""
+            self.monitor_combo.addItem(
+                f"{entry['name']} — {entry['width']}×{entry['height']}{suffix}",
+                entry["index"],
+            )
+        try:
+            current_monitor = int(self.config.get("monitor_index", 0) or 0)
+        except (TypeError, ValueError):
+            current_monitor = 0
+        monitor_pos = self.monitor_combo.findData(current_monitor)
+        self.monitor_combo.setCurrentIndex(monitor_pos if monitor_pos >= 0 else 0)
+        self.monitor_combo.currentIndexChanged.connect(self._on_monitor_changed)
+        monitor_form.addRow("Захватывать монитор:", self.monitor_combo)
+        monitor_form.addRow(QLabel(
+            "Для второго монитора: выбери его здесь и построй маппинг заново.\n"
+            "Координаты диодов считаются от выбранного монитора."
+        ))
+        layout.addWidget(monitor_box)
 
         # --- область захвата ---
         capture_region_box = QGroupBox("Захват экрана")
