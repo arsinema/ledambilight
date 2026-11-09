@@ -55,6 +55,8 @@ DEFAULT_CONFIG = {
     "led_sampling_mode": "average",  # "average" (среднее по области) или "dominant" (самый частый цвет)
     "sample_width": 10,          # размер области выборки одного диода, px (5-40)
     "capture_backend": "dxgi",   # "dxgi" (быстрый) или "wgc" (работает в HDR/эксклюзивном полноэкране)
+    "capture_region": None,      # [left, top, width, height] или None = весь экран
+    "language": "ru",            # "ru" или "en"
 
     "minimize_to_tray": True,     # закрытие окна сворачивает в трей вместо выхода
     "auto_reconnect": True,       # пытаться само-восстанавливать связь при обрыве
@@ -492,9 +494,27 @@ def _sanitize(config):
         ("unknown_process_profile", ("desktop", "movie", "game"), "desktop"),
         ("led_sampling_mode", ("average", "dominant"), "average"),
         ("capture_backend", ("dxgi", "wgc"), "dxgi"),
+        ("language", ("ru", "en"), "ru"),
     ):
         if config.get(key) not in allowed:
             log.warning("Недопустимое значение %r=%r, ставлю %r", key, config.get(key), fallback)
             config[key] = fallback
+
+    region = config.get("capture_region")
+    if region is not None:
+        try:
+            left, top, width, height = (int(v) for v in region)
+        except (TypeError, ValueError):
+            log.warning("Некорректная область захвата %r, беру весь экран", region)
+            region = None
+        else:
+            screen_w = int(config.get("screen_width", 1920))
+            screen_h = int(config.get("screen_height", 1080))
+            left = max(0, min(left, screen_w - 2))
+            top = max(0, min(top, screen_h - 2))
+            width = max(2, min(width, screen_w - left))
+            height = max(2, min(height, screen_h - top))
+            region = [left, top, width, height]
+    config["capture_region"] = region
 
     return config

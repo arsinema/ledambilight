@@ -63,9 +63,17 @@ def bgra_to_rgb(frame):
 
 
 class ScreenCapture:
-    def __init__(self, target_fps=30, backend="dxgi"):
+    def __init__(self, target_fps=30, backend="dxgi", region=None):
         self.target_fps = target_fps
         self.backend = backend
+        self.region = None
+        if region:
+            try:
+                left, top, width, height = (int(v) for v in region)
+                if width > 1 and height > 1:
+                    self.region = (left, top, width, height)
+            except (TypeError, ValueError):
+                self.region = None
         self.camera = None
         self._wgc = None
         self._wgc_control = None
@@ -77,11 +85,11 @@ class ScreenCapture:
     def start(self):
         if self.backend == "wgc":
             if self._start_wgc():
-                log.info("Захват экрана: WGC")
+                log.info("Захват экрана: WGC%s", " (область)" if self.region else "")
                 return
-            log.warning("WGC недоступен, переключаюсь на DXGI")
+            log.warning("WGC недоступен или не умеет область, переключаюсь на DXGI")
         self._start_dxgi()
-        log.info("Захват экрана: DXGI")
+        log.info("Захват экрана: DXGI%s", f", область {self.region}" if self.region else "")
 
     def _start_dxgi(self):
         if dxcam is None:
@@ -95,7 +103,13 @@ class ScreenCapture:
         # max_buffer_len=2: нам нужен только самый свежий кадр (get_latest_frame),
         # а не история — дефолтный большой буфер держит в памяти десятки
         # full-HD кадров и был основной причиной раздутого потребления RAM.
-        self.camera = dxcam.create(output_color="BGRA", max_buffer_len=2)
+        region = None
+        if self.region:
+            left, top, width, height = self.region
+            region = (left, top, left + width, top + height)
+        self.camera = dxcam.create(
+            output_color="BGRA", max_buffer_len=2, region=region
+        )
         if self.camera is None:
             raise RuntimeError("Не удалось создать DXCam (проверьте GPU/драйверы).")
         self.camera.start(target_fps=self.target_fps, video_mode=True)
@@ -104,7 +118,11 @@ class ScreenCapture:
         """Пробует поднять захват через Windows Graphics Capture.
 
         Любая ошибка здесь не фатальна: вызывающий код откатится на DXGI.
+        WGC в этой сборке не умеет произвольную область, поэтому при
+        выбранной области сразу отдаём False.
         """
+        if self.region is not None:
+            return False
         if not HAS_WGC:
             return False
         try:

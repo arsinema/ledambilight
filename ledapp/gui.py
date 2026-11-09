@@ -32,7 +32,7 @@ from .audio_engine import list_output_devices, is_available as audio_is_availabl
 from .updates import check_for_update
 from .support_bundle import build_report, default_report_name
 from .presets import apply_preset, export_preset, mapping_payload, validate_preset
-from . import autostart, __version__
+from . import autostart, i18n, __version__
 
 log = logging.getLogger(__name__)
 
@@ -630,6 +630,154 @@ class FullscreenPointEditor(QDialog):
         )
 
 
+class CaptureRegionSelector(QDialog):
+    """Полноэкранный выбор прямоугольной области захвата.
+
+    Координаты возвращаются в пикселях экрана (region = [left, top, w, h]),
+    а не в логических координатах Qt: при масштабе Windows 125/150% это
+    разные вещи, и DXGI работает именно в пикселях.
+    """
+
+    def __init__(self, background, screen_width, screen_height, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(
+            Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool
+        )
+        self.setAttribute(Qt.WA_DeleteOnClose, True)
+        self.setCursor(Qt.CrossCursor)
+        self.setMouseTracking(True)
+        self.setWindowTitle("Область захвата")
+        self._background = background
+        self._sw = max(1, int(screen_width))
+        self._sh = max(1, int(screen_height))
+        self._start = None
+        self._current = None
+        self.region = None
+
+    def showEvent(self, event):  # noqa: N802
+        super().showEvent(event)
+        QTimer.singleShot(80, self._force_foreground)
+
+    def _force_foreground(self):
+        try:
+            import ctypes
+            hwnd = int(self.winId())
+            if not hwnd:
+                return
+            user32 = ctypes.windll.user32
+            kernel32 = ctypes.windll.kernel32
+            foreground = user32.GetForegroundWindow()
+            foreground_tid = user32.GetWindowThreadProcessId(foreground, None)
+            current_tid = kernel32.GetCurrentThreadId()
+            user32.AttachThreadInput(current_tid, foreground_tid, True)
+            try:
+                user32.BringWindowToTop(hwnd)
+                user32.SetForegroundWindow(hwnd)
+                user32.SetActiveWindow(hwnd)
+            finally:
+                user32.AttachThreadInput(current_tid, foreground_tid, False)
+            user32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0040)
+        except Exception:
+            log.debug("Не удалось поднять выбор области", exc_info=True)
+
+    def _rect(self):
+        if self._start is None or self._current is None:
+            return None
+        x1, y1 = self._start
+        x2, y2 = self._current
+        return QRectF(min(x1, x2), min(y1, y2), abs(x2 - x1), abs(y2 - y1))
+
+    def _to_region(self, rect):
+        sx = self._sw / max(1, self.width())
+        sy = self._sh / max(1, self.height())
+        left = int(round(rect.x() * sx))
+        top = int(round(rect.y() * sy))
+        width = int(round(rect.width() * sx))
+        height = int(round(rect.height() * sy))
+        left = max(0, min(left, self._sw - 2))
+        top = max(0, min(top, self._sh - 2))
+        width = max(2, min(width, self._sw - left))
+        height = max(2, min(height, self._sh - top))
+        return [left, top, width, height]
+
+    def paintEvent(self, event):  # noqa: N802
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), QColor(10, 12, 16))
+        if self._background is not None:
+            painter.drawPixmap(self.rect(), self._background)
+        painter.fillRect(self.rect(), QColor(0, 0, 0, 110))
+        rect = self._rect()
+        if rect is not None and rect.width() > 1 and rect.height() > 1:
+            # Показываем выбранную область без затемнения
+            painter.save()
+            painter.setClipRect(rect)
+            if self._background is not None:
+                painter.drawPixmap(self.rect(), self._background)
+            else:
+                painter.fillRect(rect, QColor(24, 27, 33))
+            painter.restore()
+            painter.setPen(QPen(QColor(60, 220, 120), 2))
+            painter.drawRect(rect)
+            size = self._to_region(rect)
+            label = f"{size[2]} × {size[3]} px"
+            painter.setPen(QColor(255, 220, 0))
+            painter.drawText(
+                QRectF(rect.x() + 8, rect.y() + 8, 220, 24),
+                Qt.AlignLeft | Qt.AlignVCenter, label,
+            )
+        hint = ("Протяни прямоугольник вокруг окна или нужной части экрана · "
+                "Esc — отмена")
+        painter.setPen(QColor("#e4e4e7"))
+        font = painter.font()
+        font.setPointSize(12)
+        painter.setFont(font)
+        metrics = painter.fontMetrics()
+        width = metrics.horizontalAdvance(hint) + 30
+        painter.fillRect(
+            QRectF((self.width() - width) / 2, 16, width, 38),
+            QColor(20, 22, 26, 235),
+        )
+        painter.drawText(
+            QRectF((self.width() - width) / 2, 16, width, 38),
+            Qt.AlignCenter, hint,
+        )
+        painter.end()
+
+    def mousePressEvent(self, event):  # noqa: N802
+        if event.button() == Qt.LeftButton:
+            self._start = (event.x(), event.y())
+            self._current = self._start
+            self.update()
+        elif event.button() == Qt.RightButton:
+            self._start = None
+            self._current = None
+            self.update()
+
+    def mouseMoveEvent(self, event):  # noqa: N802
+        if self._start is not None:
+            self._current = (event.x(), event.y())
+            self.update()
+
+    def mouseReleaseEvent(self, event):  # noqa: N802
+        if event.button() != Qt.LeftButton or self._start is None:
+            return
+        self._current = (event.x(), event.y())
+        rect = self._rect()
+        if rect is None or rect.width() < 8 or rect.height() < 8:
+            self._start = None
+            self._current = None
+            self.update()
+            return
+        self.region = self._to_region(rect)
+        self.accept()
+
+    def keyPressEvent(self, event):  # noqa: N802
+        if event.key() == Qt.Key_Escape:
+            self.reject()
+        else:
+            super().keyPressEvent(event)
+
+
 class MainWindow(QMainWindow):
     update_checked = pyqtSignal(object)
 
@@ -641,6 +789,7 @@ class MainWindow(QMainWindow):
                                         # но при этом окно свободно уменьшается/растягивается
 
         self.config = load_config()
+        i18n.install(self.config.get("language", "ru"))
 
         self._save_timer = QTimer()
         self._save_timer.setSingleShot(True)
@@ -686,6 +835,7 @@ class MainWindow(QMainWindow):
         self._scene_sliders = {}
 
         self._build_ui()
+        QTimer.singleShot(0, lambda: i18n.translate_tree(self))
         self._build_tray_icon()
 
         # Ctrl+Q — привычный способ закрыть приложение из окна, когда
@@ -2977,6 +3127,67 @@ class MainWindow(QMainWindow):
             except Exception:
                 return None
 
+    def _capture_region_text(self):
+        region = self.config.get("capture_region")
+        english = i18n.current_language() == "en"
+        if not region:
+            return "Full screen" if english else "Весь экран"
+        try:
+            left, top, width, height = (int(v) for v in region)
+        except (TypeError, ValueError):
+            return "Full screen" if english else "Весь экран"
+        if english:
+            return f"Window/area: {width}×{height} px at ({left}, {top})"
+        return f"Окно/область: {width}×{height} px в ({left}, {top})"
+
+    def _on_select_capture_region(self):
+        """Полноэкранный выбор области; координаты — в пикселях экрана."""
+        screen = QApplication.primaryScreen()
+        if screen is None:
+            QMessageBox.warning(self, "Захват экрана", "Не удалось получить доступ к экрану")
+            return
+        self.hide()
+        QApplication.processEvents()
+        time.sleep(0.25)
+        background = self._grab_screen_without_taskbar(screen)
+        selector = CaptureRegionSelector(
+            background,
+            self.config.get("screen_width", 1920),
+            self.config.get("screen_height", 1080),
+            self,
+        )
+        selector.showFullScreen()
+        accepted = selector.exec_() == QDialog.Accepted
+        region = selector.region if accepted else None
+        selector.deleteLater()
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        if not accepted or not region:
+            return
+        self._set_top("capture_region", region)
+        self.capture_region_label.setText(self._capture_region_text())
+        self.status_label.setText(
+            "Область захвата сохранена — построй маппинг заново"
+        )
+        self._restart_capture_for_region()
+
+    def _on_clear_capture_region(self):
+        if not self.config.get("capture_region"):
+            return
+        self._set_top("capture_region", None)
+        self.capture_region_label.setText(self._capture_region_text())
+        self.status_label.setText("Захват всего экрана — построй маппинг заново")
+        self._restart_capture_for_region()
+
+    def _restart_capture_for_region(self):
+        """Перезапускает захват, чтобы ScreenCapture учёл новую область."""
+        self.worker.update_config(self.config)
+        if not self._capture_running:
+            return
+        self.worker.stop_capture()
+        QTimer.singleShot(700, self.worker.start_capture)
+
     def _on_fullscreen_manual_points(self):
         """Открывает расстановку диодов на весь монитор, без панели задач."""
         screen = QApplication.primaryScreen()
@@ -3648,6 +3859,45 @@ class MainWindow(QMainWindow):
         ))
         layout.addWidget(remote_box)
 
+        # --- область захвата ---
+        capture_region_box = QGroupBox("Захват экрана")
+        capture_region_form = QFormLayout(capture_region_box)
+        self.capture_region_label = QLabel(self._capture_region_text())
+        self.capture_region_label.setStyleSheet("color: #8fb8ff;")
+        capture_region_form.addRow("Источник:", self.capture_region_label)
+        capture_region_row = QHBoxLayout()
+        select_region_btn = QPushButton("Выбрать окно/область…")
+        select_region_btn.clicked.connect(self._on_select_capture_region)
+        clear_region_btn = QPushButton("Весь экран")
+        clear_region_btn.clicked.connect(self._on_clear_capture_region)
+        capture_region_row.addWidget(select_region_btn)
+        capture_region_row.addWidget(clear_region_btn)
+        capture_region_row.addStretch()
+        capture_region_form.addRow(capture_region_row)
+        capture_region_form.addRow(QLabel(
+            "Протяни прямоугольник вокруг окна или нужной части экрана.\n"
+            "После смены области построй маппинг заново — координаты диодов\n"
+            "пересчитываются относительно области."
+        ))
+        layout.addWidget(capture_region_box)
+
+        # --- язык ---
+        language_box = QGroupBox("Язык интерфейса / Language")
+        language_form = QFormLayout(language_box)
+        self.language_combo = QComboBox()
+        self.language_combo.addItem("Русский", "ru")
+        self.language_combo.addItem("English", "en")
+        current_language = self.config.get("language", "ru")
+        idx = self.language_combo.findData(current_language)
+        self.language_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        self.language_combo.currentIndexChanged.connect(self._on_language_changed)
+        language_form.addRow("Язык / Language:", self.language_combo)
+        language_form.addRow(QLabel(
+            "После смены языка приложение нужно перезапустить.\n"
+            "English UI is a community-friendly translation; corrections welcome."
+        ))
+        layout.addWidget(language_box)
+
         # --- MQTT ---
         mqtt_box = QGroupBox("MQTT / Home Assistant")
         mqtt_form = QFormLayout(mqtt_box)
@@ -3763,6 +4013,23 @@ class MainWindow(QMainWindow):
             self._setup_hotkeys()
         else:
             self.hotkey_filter.set_enabled(True)
+
+    def _on_language_changed(self, index):
+        code = self.language_combo.itemData(index) or "ru"
+        if code == self.config.get("language", "ru"):
+            return
+        self._set_top("language", code)
+        self._save_and_push_config()
+        answer = QMessageBox.question(
+            self, "Язык / Language",
+            "Перезапустить приложение сейчас, чтобы применить язык?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        )
+        if answer == QMessageBox.Yes:
+            self._restart_application()
+        else:
+            self.status_label.setText("Язык сохранён — перезапусти приложение")
 
     def _on_export_preset(self):
         """Сохраняет настройки и маппинг в .ledpreset."""
@@ -4426,11 +4693,11 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def on_status(self, text):
-        self.status_label.setText(text)
+        self.status_label.setText(i18n.tr(text))
 
     def on_connected(self, connected):
         self._connected_flag = bool(connected)
-        self.status_label.setText("Подключено" if connected else "Не подключено")
+        self.status_label.setText(i18n.tr("Подключено" if connected else "Не подключено"))
         # Зелёная точка = подключено, серая = нет
         color = "#2fa84f" if connected else "#6b6c72"
         self.status_dot.setStyleSheet(f"color: {color}; font-size: 14px;")
@@ -4685,11 +4952,12 @@ class MainWindow(QMainWindow):
             return
         self._last_error_text = message
         self._last_error_time = now
-        first_line = message.split("\n")[0]
+        display = i18n.tr(message)
+        first_line = display.split("\n")[0]
         self.status_label.setText(first_line[:120])
         self.status_dot.setStyleSheet("color: #e05050; font-size: 14px;")
         if getattr(self, "tray_icon", None) is not None:
-            self.tray_icon.showMessage("LED Ambilight", message, QSystemTrayIcon.Warning, 4000)
+            self.tray_icon.showMessage("LED Ambilight", display, QSystemTrayIcon.Warning, 4000)
 
     # ------------------------------------------------------------------
     # Системный трей

@@ -9,14 +9,14 @@ Priorities are chosen by **impact for the most users / effort**:
 | # | Idea | Why it helps | Effort |
 |---|---|---|---|
 | 1 | One-click support bundle ✅ 1.3.0 | Fixes “it doesn’t work” reports in minutes instead of days | S–M |
-| 2 | Window / region capture | Privacy, windowed video, games, multi-monitor setups | M |
-| 3 | English UI (localization) | Opens the project to the international audience | L |
+| 2 | Window / region capture ✅ 1.4.0 | Privacy, windowed video, games, multi-monitor setups | M |
+| 3 | English UI (localization) ✅ 1.4.0 | Opens the project to the international audience | L |
 | 4 | In-app updater | Non-technical users can update without searching GitHub | M |
 | 5 | Shareable presets ✅ 1.3.0 | One file with scenes, calibration and mapping; easy to share | S–M |
 | 6 | Multi-monitor / multi-strip | One strip per monitor edge, or several WLED devices | L |
 | 7 | Phone-camera calibration | Point a phone at the strip; no manual gain/offset guessing | L |
 | 8 | Home Assistant MQTT Discovery ✅ 1.3.0 | Lights appear in HA automatically, no manual YAML | S–M |
-| 9 | Installer + uninstaller | Non-technical install, Start Menu shortcut, clean removal | M |
+| 9 | Installer + uninstaller ✅ 1.4.0 | Non-technical install, Start Menu shortcut, clean removal | M |
 
 ## 1. One-click support bundle
 

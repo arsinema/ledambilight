@@ -238,6 +238,8 @@ def test_config():
     broken["wled_led_count"] = -5
     broken["led_start_offset"] = -3
     broken["strip_density"] = "abc"
+    broken["capture_region"] = [-50, -50, 99999, 99999]
+    broken["language"] = "de"
     broken["profiles"] = {"desktop": "мусор"}
     broken["game_processes"] = "cs2.exe"
     broken["strip_mode"] = "нечто"
@@ -246,6 +248,12 @@ def test_config():
     check("нечисловой порт чинится", fixed["wled_port"] == 21324, str(fixed["wled_port"]))
     check("отрицательное число диодов чинится", fixed["wled_led_count"] == 1, str(fixed["wled_led_count"]))
     check("отрицательное смещение диодов чинится", fixed["led_start_offset"] == 0, str(fixed["led_start_offset"]))
+    check("область захвата зажимается в экран",
+          fixed["capture_region"][0] >= 0 and fixed["capture_region"][1] >= 0
+          and fixed["capture_region"][2] <= fixed["screen_width"]
+          and fixed["capture_region"][3] <= fixed["screen_height"],
+          str(fixed["capture_region"]))
+    check("неизвестный язык чинится на русский", fixed["language"] == "ru", str(fixed["language"]))
     check("мусорная плотность чинится", fixed["strip_density"] == 30, str(fixed["strip_density"]))
     check("битый профиль заменяется дефолтным",
           isinstance(fixed["profiles"].get("desktop"), dict))

@@ -44,8 +44,10 @@ git push origin v1.0.2
 ```powershell
 python build_exe.py              # dist\LEDAmbilight.exe
 python build_exe.py --portable   # dist\LEDAmbilight-<версия>-portable.zip
+python build_installer.py        # dist\installer\LEDAmbilight-<версия>-setup.exe
 Get-FileHash dist\LEDAmbilight.exe -Algorithm SHA256
 Get-FileHash dist\LEDAmbilight-*-portable.zip -Algorithm SHA256
+Get-FileHash dist\installer\LEDAmbilight-*-setup.exe -Algorithm SHA256
 ```
 
 ## 5. Создать релиз на GitHub
@@ -55,13 +57,14 @@ $ver = "1.0.2"
 gh release create "v$ver" `
     "dist\LEDAmbilight.exe" `
     "dist\LEDAmbilight-$ver-portable.zip" `
+    "dist\installer\LEDAmbilight-$ver-setup.exe" `
     --title "LED Ambilight $ver" `
     --notes-file "release-notes-$ver.md" `
     --target master
 ```
 
 В заметках релиза укажи: что исправлено, что нового, требования, порядок
-установки (SmartScreen), SHA-256 обоих файлов.
+установки (SmartScreen), SHA-256 всех файлов.
 
 ## 6. Проверить релиз
 

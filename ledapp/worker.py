@@ -455,6 +455,7 @@ class LedWorker(QThread):
                     self._capture = ScreenCapture(
                         target_fps=self.config.get("target_fps", 30),
                         backend=self.config.get("capture_backend", "dxgi"),
+                        region=self.config.get("capture_region"),
                     )
                     self._capture.start()
                 self.capture_enabled = True
@@ -848,6 +849,7 @@ class LedWorker(QThread):
             self._capture = ScreenCapture(
                 target_fps=new_fps,
                 backend=self.config.get("capture_backend", "dxgi"),
+                region=self.config.get("capture_region"),
             )
             self._capture.start()
             self._smoothed_pixels = None
@@ -1032,6 +1034,29 @@ class LedWorker(QThread):
     async def _apply_strip_mapper(self, payload):
         led_path, screen_width, screen_height, exact_positions, led_count = payload
 
+        # Область захвата задана в координатах полного экрана. Маппинг с
+        # холста тоже приходит в полных координатах, поэтому сначала
+        # сдвигаем его внутрь области, а потом подгоняем под реальный кадр.
+        region = None
+        if self._capture is not None:
+            region = getattr(self._capture, "region", None)
+        if region is None:
+            region = self.config.get("capture_region")
+        if region:
+            try:
+                left, top, region_w, region_h = (int(v) for v in region)
+                if region_w > 1 and region_h > 1:
+                    led_path = [
+                        (
+                            min(max(x - left, 0.0), region_w - 1.0),
+                            min(max(y - top, 0.0), region_h - 1.0),
+                        )
+                        for x, y in led_path
+                    ]
+                    screen_width, screen_height = region_w, region_h
+            except (TypeError, ValueError):
+                log.debug("Некорректная область захвата при маппинге: %r", region)
+
         # Если захват уже запущен - берём РЕАЛЬНОЕ разрешение кадра,
         # чтобы маппинг точно совпадал с тем, что видит камера захвата
         if self._capture is not None:
@@ -1064,10 +1089,11 @@ class LedWorker(QThread):
             self.wled.set_led_count(total_leds)
             self.wled_serial.set_led_count(total_leds)
             mode_txt = "точные позиции" if exact_positions else "равномерно по длине"
+            region_txt = f", область {region}" if region else ", весь экран"
             self.status_changed.emit(
                 f"Маппинг ленты настроен ({len(led_path)} точек, {mode_txt}, "
-                f"экран {screen_width}x{screen_height}, активных диодов {led_count}, "
-                f"пропущено первых {offset})"
+                f"экран {screen_width}x{screen_height}{region_txt}, "
+                f"активных диодов {led_count}, пропущено первых {offset})"
             )
             self._emit_mapping_boxes()
             log.info("Маппинг построен: точек=%s, активных=%s, offset=%s, экран=%sx%s, exact=%s",
@@ -1081,6 +1107,34 @@ class LedWorker(QThread):
             if not ok:
                 self.error_occurred.emit("Файл маппинга загружен, но построить карту не удалось")
                 return
+
+            # Если включена область захвата, а файл маппинга сделан для
+            # полного экрана — сдвигаем точки в координаты области.
+            region = None
+            if self._capture is not None:
+                region = getattr(self._capture, "region", None)
+            if region is None:
+                region = self.config.get("capture_region")
+            if region:
+                try:
+                    left, top, region_w, region_h = (int(v) for v in region)
+                    sw, sh = self.strip_mapper.screen_width, self.strip_mapper.screen_height
+                    if sw > region_w or sh > region_h:
+                        self.strip_mapper.led_path = [
+                            (
+                                min(max(x - left, 0.0), region_w - 1.0),
+                                min(max(y - top, 0.0), region_h - 1.0),
+                            )
+                            for x, y in self.strip_mapper.led_path
+                        ]
+                        self.strip_mapper.screen_width = region_w
+                        self.strip_mapper.screen_height = region_h
+                        self.strip_mapper.build_mapping(
+                            strip_width=self.strip_mapper.last_strip_width,
+                            exact_positions=self.strip_mapper.last_exact_positions,
+                        )
+                except (TypeError, ValueError):
+                    log.debug("Некорректная область при загрузке маппинга: %r", region)
 
             # Подгонка под реальное разрешение захвата (как и при обычном построении)
             if self._capture is not None:

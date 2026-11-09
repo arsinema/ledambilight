@@ -28,11 +28,13 @@ per-LED colors to addressable LED strips:
 - Skip the first N LEDs (leave the start of a strip dark) and keep the rest mapped
 - One-click support report (logs + redacted config + mapping) and shareable presets
 - Home Assistant MQTT Discovery: a light entity appears automatically
+- Capture a selected window/region; English UI with a language switch
+- Windows installer (per-user, Start Menu shortcut, uninstaller)
 
 You need an addressable strip (WS2812B/SK6812) and a 5 V power supply. Download
 the portable EXE or ZIP from
 [Releases](https://github.com/arsinema/ledambilight/releases/latest).
-The application UI is currently in Russian.
+The application UI is available in Russian and English.
 
 Ideas and priorities for future versions: [ROADMAP.md](ROADMAP.md).
 
@@ -41,8 +43,10 @@ Ideas and priorities for future versions: [ROADMAP.md](ROADMAP.md).
 Готовый `LEDAmbilight.exe` (Windows 10/11, Python не нужен) лежит в разделе
 **[Releases](https://github.com/arsinema/ledambilight/releases/latest)**.
 Скачай файл и запусти — конфиг создастся рядом с exe при первом запуске.
-Там же лежит портативный zip: распакуй папку и запусти `LEDAmbilight.exe`
+Там же портативный zip: распакуй папку и запусти `LEDAmbilight.exe`
 из неё — этот вариант стартует быстрее и реже вызывает вопросы антивируса.
+Для обычной установки есть `LEDAmbilight-1.4.0-setup.exe`: ярлык в «Пуске»,
+удаление, опционально автозапуск; права администратора не нужны.
 
 Windows SmartScreen может показать «Неизвестный издатель»: сборка не подписана
 платным сертификатом. Нажми «Подробнее» → «Выполнить в любом случае».
@@ -112,6 +116,15 @@ python build_exe.py
 запускается быстрее и реже вызывает ложные срабатывания антивируса.
 Команда `python build_exe.py --portable` делает то же самое и сразу упаковывает
 папку в `dist/LEDAmbilight-<версия>-portable.zip` — это и есть релизный архив.
+Установщик собирается отдельно (нужен Inno Setup 6):
+
+```
+python build_installer.py
+```
+
+Он берёт `dist/LEDAmbilight`, кладёт результат в
+`dist/installer/LEDAmbilight-<версия>-setup.exe`. Установка идёт в
+`%LOCALAPPDATA%\Programs\LEDAmbilight` без прав администратора.
 
 OpenCV для сборки и работы не нужен: dxcam отдаёт кадры в родном BGRA,
 а приложение само переводит их в RGB средствами numpy (`capture.bgra_to_rgb`).
@@ -267,6 +280,11 @@ OpenCV для сборки и работы не нужен: dxcam отдаёт �
   IP/MAC, текущим маппингом и диагностикой — приложи его к issue
 - **Пресеты `.ledpreset`**: экспорт/импорт сцен, калибровки, фильтров и
   маппинга; сетевые настройки в пресет не попадают
+- **Захват окна или области**: протяни прямоугольник в «Система» → «Захват
+  экрана», и анализируется только он; «Весь экран» возвращает обычный режим
+- **Английский интерфейс**: переключатель «Язык / Language» в «Системе»
+- **Установщик Windows**: установка без прав администратора, ярлык в «Пуске»,
+  удаление; портативный zip и одиночный exe остаются
 - Кнопка **«Диагностика»**: проверяет связь с платой, её версию, число диодов,
   уровень Wi-Fi, состояние захвата и маппинга — и подсказывает, что не так
 - **Превью зон диодов**: на вкладке «Просмотр захвата» можно наложить на кадр
@@ -332,6 +350,8 @@ ledapp/worker.py             — фоновый поток (asyncio) + Qt-сиг
 ledapp/updates.py            — проверка обновлений через GitHub Releases
 ledapp/support_bundle.py     — ZIP-отчёт для поддержки (логи, конфиг, маппинг)
 ledapp/presets.py            — экспорт/импорт пресетов настроек и маппинга
+ledapp/i18n.py               — переключение языка и перевод виджетов
+ledapp/locales_en.py         — английский каталог строк
 ledapp/audio_engine.py       — захват системного звука (loopback) и анализ
 ledapp/strip_mapper.py       — сопоставление диодов координатам экрана
 ledapp/weather.py            — цвет по погоде для дежурного режима
