@@ -226,12 +226,15 @@ def test_config():
     check("вложенные словари не теряются", "standby" in merged and "audio" in merged)
     check("профиль для неизвестных процессов по умолчанию desktop",
           DEFAULT_CONFIG["unknown_process_profile"] == "desktop")
+    check("смещение первых диодов по умолчанию 0",
+          DEFAULT_CONFIG["led_start_offset"] == 0)
 
     # Повреждённый конфиг не должен ронять приложение при старте
     broken = copy.deepcopy(DEFAULT_CONFIG)
     broken["brightness"] = None
     broken["wled_port"] = "не число"
     broken["wled_led_count"] = -5
+    broken["led_start_offset"] = -3
     broken["strip_density"] = "abc"
     broken["profiles"] = {"desktop": "мусор"}
     broken["game_processes"] = "cs2.exe"
@@ -240,6 +243,7 @@ def test_config():
     check("битая секция заменяется дефолтной", isinstance(fixed["brightness"], dict))
     check("нечисловой порт чинится", fixed["wled_port"] == 21324, str(fixed["wled_port"]))
     check("отрицательное число диодов чинится", fixed["wled_led_count"] == 1, str(fixed["wled_led_count"]))
+    check("отрицательное смещение диодов чинится", fixed["led_start_offset"] == 0, str(fixed["led_start_offset"]))
     check("мусорная плотность чинится", fixed["strip_density"] == 30, str(fixed["strip_density"]))
     check("битый профиль заменяется дефолтным",
           isinstance(fixed["profiles"].get("desktop"), dict))

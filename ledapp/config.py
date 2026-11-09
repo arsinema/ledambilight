@@ -44,6 +44,7 @@ DEFAULT_CONFIG = {
     "wled_host": "192.168.1.100",  # IP-адрес WLED-устройства
     "wled_port": 21324,          # UDP порт WLED
     "wled_led_count": 90,        # количество светодиодов на ленте
+    "led_start_offset": 0,       # сколько первых диодов пропустить (останутся тёмными)
     "wled_serial_port": "COM5",  # COM-порт для подключения по USB (Adalight)
     "wled_serial_baud": 115200,  # скорость USB-соединения (115200 хватает на 50-100 диодов)
     "strip_meters": 5,           # метраж ленты (1-10м)
@@ -387,6 +388,7 @@ _DICT_SECTIONS = (
 _INT_RANGES = {
     "wled_port": (1, 65535, 21324),
     "wled_led_count": (1, 1000, 90),
+    "led_start_offset": (0, 999, 0),
     "wled_serial_baud": (9600, 2000000, 115200),
     "screen_width": (320, 16384, 1920),
     "screen_height": (240, 16384, 1080),

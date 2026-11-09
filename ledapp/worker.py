@@ -102,6 +102,7 @@ class LedWorker(QThread):
         self._queue = queue.Queue()
         self._running = True
         self.capture_enabled = False
+        self._led_start_offset = max(0, int(config.get("led_start_offset", 0)))
 
         self.ble = BLEController(config["write_uuid"])
         self.wled = WLEDController(
@@ -388,6 +389,7 @@ class LedWorker(QThread):
     async def _handle_command(self, cmd, payload):
         if cmd == "update_config":
             self.config = payload
+            self._led_start_offset = max(0, int(payload.get("led_start_offset", 0)))
             self.color_engine.update_config(payload)
             self.ble.write_uuid = payload.get("write_uuid", self.ble.write_uuid)
             self.audio.update_settings(payload.get("audio", {}))
@@ -977,8 +979,9 @@ class LedWorker(QThread):
             self.error_occurred.emit("Тест-развёртка доступна только в режиме WLED (Wi-Fi или USB)")
             return
 
+        offset = max(0, int(self.config.get("led_start_offset", 0)))
         count = self.strip_mapper.led_count if self.strip_mapper.led_boxes \
-            else self.config.get("wled_led_count", 90)
+            else max(1, int(self.config.get("wled_led_count", 90)) - offset)
         if count <= 0:
             self.error_occurred.emit("Нет диодов для развёртки - сначала построй маппинг")
             return
@@ -986,22 +989,26 @@ class LedWorker(QThread):
         self._sweep_active = True
         old_interval = target.min_send_interval
         target.min_send_interval = 0.0  # иначе пакеты будут отбрасываться троттлингом
-        self.status_changed.emit(f"Развёртка запущена: 0 / {count}")
+        self.status_changed.emit(f"Развёртка запущена: {offset + 1} / {count + offset}")
         try:
             for i in range(count):
                 if self._sweep_cancel:
-                    self.status_changed.emit(f"Развёртка отменена на диоде {i + 1} / {count}")
+                    self.status_changed.emit(
+                        f"Развёртка отменена на диоде {i + 1 + offset} / {count + offset}"
+                    )
                     break
                 pixels = [(0, 0, 0)] * count
                 pixels[i] = (r, g, b)
-                target.send_frame(pixels)
-                self.status_changed.emit(f"Развёртка: диод {i + 1} / {count}")
+                target.send_frame(self._with_led_offset(pixels))
+                self.status_changed.emit(
+                    f"Развёртка: диод {i + 1 + offset} / {count + offset}"
+                )
                 await asyncio.sleep(delay_ms / 1000.0)
             else:
                 self.status_changed.emit("Развёртка завершена")
         finally:
             target.min_send_interval = old_interval
-            target.send_frame([(0, 0, 0)] * count)
+            target.send_frame([(0, 0, 0)] * (count + offset))
             self._sweep_active = False
 
     # ------------------------------------------------------------------
@@ -1026,8 +1033,9 @@ class LedWorker(QThread):
             except Exception:
                 log.debug("Не удалось получить кадр для подгонки маппинга", exc_info=True)
 
+        offset = max(0, int(self.config.get("led_start_offset", 0)))
         if led_count is None:
-            led_count = self.config.get("wled_led_count", 90)
+            led_count = max(1, int(self.config.get("wled_led_count", 90)) - offset)
         led_count = max(1, int(led_count))
         strip_width = int(self.config.get("sample_width", 10))
 
@@ -1037,16 +1045,19 @@ class LedWorker(QThread):
         self._last_mapper_exact_positions = exact_positions
         if self.strip_mapper.build_mapping(strip_width=strip_width, exact_positions=exact_positions):
             self._smoothed_pixels = None
-            self.wled.set_led_count(led_count)
-            self.wled_serial.set_led_count(led_count)
+            self._led_start_offset = offset
+            total_leds = led_count + offset
+            self.wled.set_led_count(total_leds)
+            self.wled_serial.set_led_count(total_leds)
             mode_txt = "точные позиции" if exact_positions else "равномерно по длине"
             self.status_changed.emit(
                 f"Маппинг ленты настроен ({len(led_path)} точек, {mode_txt}, "
-                f"экран {screen_width}x{screen_height}, диодов {led_count})"
+                f"экран {screen_width}x{screen_height}, активных диодов {led_count}, "
+                f"пропущено первых {offset})"
             )
             self._emit_mapping_boxes()
-            log.info("Маппинг построен: точек=%s, диодов=%s, экран=%sx%s, exact=%s",
-                     len(led_path), led_count, screen_width, screen_height, exact_positions)
+            log.info("Маппинг построен: точек=%s, активных=%s, offset=%s, экран=%sx%s, exact=%s",
+                     len(led_path), led_count, offset, screen_width, screen_height, exact_positions)
         else:
             self.error_occurred.emit("Ошибка построения маппинга")
 
@@ -1080,13 +1091,16 @@ class LedWorker(QThread):
 
             self._last_mapper_strip_width = self.strip_mapper.last_strip_width
             self._last_mapper_exact_positions = self.strip_mapper.last_exact_positions
-            self.config["wled_led_count"] = self.strip_mapper.led_count
-            self.wled.set_led_count(self.strip_mapper.led_count)
-            self.wled_serial.set_led_count(self.strip_mapper.led_count)
+            offset = max(0, int(self.config.get("led_start_offset", 0)))
+            total_leds = self.strip_mapper.led_count + offset
+            self.config["wled_led_count"] = total_leds
+            self.wled.set_led_count(total_leds)
+            self.wled_serial.set_led_count(total_leds)
             self._smoothed_pixels = None
 
             self.status_changed.emit(
-                f"Маппинг загружен из {path} ({self.strip_mapper.led_count} диодов)"
+                f"Маппинг загружен из {path} ({self.strip_mapper.led_count} активных диодов, "
+                f"первые {offset} пропущены)"
             )
             self._emit_mapping_boxes()
             self.mapping_loaded.emit({
@@ -1260,7 +1274,8 @@ class LedWorker(QThread):
         if self._strip_mode not in ("wled", "wled_serial"):
             return
         target = self.wled if self._strip_mode == "wled" else self.wled_serial
-        count = max(1, int(getattr(target, "led_count", 90) or 90))
+        offset = max(0, int(self.config.get("led_start_offset", 0)))
+        count = max(1, int(getattr(target, "led_count", 90) or 90) - offset)
         pixels = [(0, 0, 0)] * count
         if 0 <= index < count:
             pixels[index] = (r, g, b)
@@ -1268,7 +1283,7 @@ class LedWorker(QThread):
         old_interval = target.min_send_interval
         target.min_send_interval = 0.0
         try:
-            sent = target.send_frame(pixels)
+            sent = target.send_frame(self._with_led_offset(pixels))
             self._note_frame(sent)
         finally:
             target.min_send_interval = old_interval
@@ -1412,12 +1427,18 @@ class LedWorker(QThread):
                 self.wled.min_send_interval = 0.0
                 try:
                     started = time.perf_counter()
-                    sent = self.wled.send_single_color(r, g, b)
+                    offset = max(0, int(self.config.get("led_start_offset", 0)))
+                    active = max(1, int(self.wled.led_count) - offset)
+                    pixels = self._with_led_offset([(r, g, b)] * active)
+                    sent = self.wled.send_frame(pixels)
                     self._note_frame(sent, (time.perf_counter() - started) * 1000.0)
                 finally:
                     self.wled.min_send_interval = old_interval
         elif self._strip_mode == "wled_serial":
-            sent = self.wled_serial.send_single_color(r, g, b)
+            offset = max(0, int(self.config.get("led_start_offset", 0)))
+            active = max(1, int(self.wled_serial.led_count) - offset)
+            pixels = self._with_led_offset([(r, g, b)] * active)
+            sent = self.wled_serial.send_frame(pixels)
             self._note_frame(sent)
 
     def _emit_mapping_boxes(self):
@@ -1611,6 +1632,13 @@ class LedWorker(QThread):
                 delay = max(delay, 1.0 / min(60.0, max_fps))
         return max(0.001, float(delay))
 
+    def _with_led_offset(self, pixels):
+        """Добавляет в начало кадра чёрные диоды, которые пользователь пропустил."""
+        offset = max(0, int(self.config.get("led_start_offset", 0)))
+        if offset <= 0:
+            return list(pixels)
+        return [(0, 0, 0)] * offset + list(pixels)
+
     async def _send_pixel_frame(self, frame, clip, fallback_color,
                                 audio_active, audio_cfg, audio_mode, state):
         """Считает и отправляет цвет каждого диода отдельно (если есть маппинг).
@@ -1651,10 +1679,11 @@ class LedWorker(QThread):
                       for r, g, b in pixels]
 
         started = time.perf_counter()
-        sent = target.send_frame(pixels)
+        send_pixels = self._with_led_offset(pixels)
+        sent = target.send_frame(send_pixels)
         latency = (time.perf_counter() - started) * 1000.0
         self._last_pixels = pixels
-        self._current_ma = estimate_current_ma(pixels, self.config)
+        self._current_ma = estimate_current_ma(send_pixels, self.config)
         self._note_frame(sent, latency)
 
         now_p = time.monotonic()
@@ -1793,9 +1822,10 @@ class LedWorker(QThread):
         if self._strip_mode in ("wled", "wled_serial") and self.strip_mapper.led_boxes:
             target = self.wled if self._strip_mode == "wled" else self.wled_serial
             started = time.perf_counter()
-            sent = target.send_frame(pixels)
+            send_pixels = self._with_led_offset(pixels)
+            sent = target.send_frame(send_pixels)
             self._note_frame(sent, (time.perf_counter() - started) * 1000.0)
-            self._current_ma = estimate_current_ma(pixels, self.config)
+            self._current_ma = estimate_current_ma(send_pixels, self.config)
             self.strip_pixels_updated.emit(pixels)
         else:
             # BLE умеет только один цвет на всю ленту

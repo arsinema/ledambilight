@@ -3,6 +3,18 @@
 Формат — [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 версии — [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [1.2.0] — 2026-11-09
+
+### Добавлено
+
+- **Пропуск первых диодов.** В «Параметрах ленты» появилось поле «Пропустить
+  первых: N диодов». Эти диоды остаются тёмными, а подсветка начинается с
+  N+1-го; маппинг, полноэкранная расстановка, тест-развёртка и раскладка по
+  развёртке учитывают смещение. Удобно, если начало ленты спрятано или не
+  используется.
+- В полноэкранном редакторе и ручном холсте номера точек показываются с учётом
+  смещения.
+
 ## [1.1.0] — 2026-11-09
 
 ### Добавлено
@@ -88,6 +100,7 @@
   приходили. Теперь кадр берётся в родном BGRA и переводится в RGB средствами
   numpy (`capture.bgra_to_rgb`).
 
+[1.2.0]: https://github.com/arsinema/ledambilight/releases/tag/v1.2.0
 [1.1.0]: https://github.com/arsinema/ledambilight/releases/tag/v1.1.0
 [1.0.3]: https://github.com/arsinema/ledambilight/releases/tag/v1.0.3
 [1.0.2]: https://github.com/arsinema/ledambilight/releases/tag/v1.0.2

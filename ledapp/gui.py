@@ -193,7 +193,8 @@ class MappingWizard(QDialog):
     автоматически — первый же зажжённый диод задаёт старт.
     """
 
-    def __init__(self, parent, worker, led_count, screen_w, screen_h, background=None):
+    def __init__(self, parent, worker, led_count, screen_w, screen_h, background=None,
+                 index_offset=0):
         super().__init__(parent)
         self.setWindowTitle("Раскладка по развёртке")
         self.setModal(True)
@@ -202,6 +203,7 @@ class MappingWizard(QDialog):
         self._screen_w = max(1, int(screen_w))
         self._screen_h = max(1, int(screen_h))
         self._background = background
+        self._index_offset = max(0, int(index_offset))
 
         self._canvas_w = 640
         self._canvas_h = max(180, int(self._canvas_w * self._screen_h / self._screen_w))
@@ -292,7 +294,8 @@ class MappingWizard(QDialog):
         total = len(self._indices)
         if self._pos < total:
             self._hint.setText(
-                f"Шаг {self._pos + 1} из {total}: зажёг диод №{self._indices[self._pos]}. "
+                f"Шаг {self._pos + 1} из {total}: зажёг диод №"
+                f"{self._indices[self._pos] + self._index_offset}. "
                 "Щёлкни по схеме там, где видишь свет."
             )
         else:
@@ -336,7 +339,8 @@ class MappingWizard(QDialog):
             painter.drawEllipse(QRectF(cx - 5, cy - 5, 10, 10))
             painter.setPen(QColor(255, 220, 0))
             painter.drawText(QRectF(cx + 7, cy - 16, 60, 20),
-                             Qt.AlignLeft | Qt.AlignVCenter, str(index))
+                             Qt.AlignLeft | Qt.AlignVCenter,
+                             str(index + self._index_offset))
 
         painter.end()
         self._canvas.setPixmap(pixmap)
@@ -368,7 +372,7 @@ class FullscreenPointEditor(QDialog):
     """
 
     def __init__(self, parent, canvas_w, canvas_h, total_leds,
-                 background=None, points=None):
+                 background=None, points=None, label_offset=0):
         super().__init__(parent)
         self.setWindowTitle("Расстановка светодиодов")
         self.setWindowFlags(
@@ -382,6 +386,7 @@ class FullscreenPointEditor(QDialog):
         self._canvas_w = max(1, int(canvas_w))
         self._canvas_h = max(1, int(canvas_h))
         self._total = max(1, int(total_leds))
+        self._label_offset = max(0, int(label_offset))
         self._background = background
         self._background_scaled = None
         self._show_background = False
@@ -581,7 +586,8 @@ class FullscreenPointEditor(QDialog):
                 painter.setPen(QColor(255, 220, 0))
                 painter.drawText(
                     QRectF(cx + 8, cy - 18, 60, 18),
-                    Qt.AlignLeft | Qt.AlignVCenter, str(index + 1),
+                    Qt.AlignLeft | Qt.AlignVCenter,
+                    str(index + 1 + self._label_offset),
                 )
 
         self._paint_hud(painter)
@@ -2268,6 +2274,18 @@ class MainWindow(QMainWindow):
         self.strip_total_leds_label = total_leds_label
         params_form.addRow("Всего светодиодов:", total_leds_label)
 
+        offset_spin = QSpinBox()
+        offset_spin.setRange(0, 999)
+        offset_spin.setValue(int(self.config.get("led_start_offset", 0)))
+        offset_spin.setSuffix(" диодов")
+        offset_spin.setToolTip(
+            "Сколько первых диодов не использовать: они останутся тёмными,\n"
+            "а остальные начнут светиться с этого места."
+        )
+        offset_spin.valueChanged.connect(self._on_led_offset_changed)
+        self.strip_offset_spin = offset_spin
+        params_form.addRow("Пропустить первых:", offset_spin)
+
         # Диагональ монитора - нужна для точного расчёта реального периметра
         diagonal_spin = QDoubleSpinBox()
         diagonal_spin.setRange(10.0, 100.0)
@@ -2722,16 +2740,15 @@ class MainWindow(QMainWindow):
                 painter.drawEllipse(int(x) - led_radius, int(y) - led_radius, led_radius * 2, led_radius * 2)
                 if i == 0 or i == len(self.strip_manual_points) - 1 or (i + 1) % 10 == 0:
                     painter.setPen(QColor(255, 255, 255))
-                    painter.drawText(int(x) + 6, int(y) - 6, str(i + 1))
+                    painter.drawText(
+                        int(x) + 6, int(y) - 6,
+                        str(i + 1 + self._led_offset()),
+                    )
                     painter.setPen(pen_led)
         
         # Рисуем светодиоды (кружочки) равномерно вдоль пути - только для
         # straight/freehand режимов (manual уже отрисован выше как есть)
-        total_leds = self.strip_total_leds_label.text()
-        try:
-            led_count = int(total_leds)
-        except ValueError:
-            led_count = 90
+        led_count = self._active_leds()
         
         if self.strip_draw_mode != "manual" and len(self.strip_path_points) > 1 and led_count > 0:
             # Равномерно распределяем диоды ПО ДЛИНЕ пути (не по числу точек мыши) -
@@ -2777,16 +2794,12 @@ class MainWindow(QMainWindow):
 
     def _try_add_manual_led(self, x, y):
         """Добавляет позицию одного светодиода в режиме ручной расстановки"""
-        total_leds_str = self.strip_total_leds_label.text()
-        try:
-            total_leds = int(total_leds_str)
-        except ValueError:
-            total_leds = 90
+        total_leds = self._active_leds()
 
         if len(self.strip_manual_points) >= total_leds:
             QMessageBox.information(
                 self, "Готово",
-                f"Все {total_leds} светодиодов уже расставлены!\n"
+                f"Все {total_leds} активных светодиодов уже расставлены!\n"
                 f"Нажми 'Отменить точку' чтобы поправить последний, или 'Построить маппинг'."
             )
             return
@@ -2881,11 +2894,13 @@ class MainWindow(QMainWindow):
     def _update_manual_progress_label(self):
         """Обновляет надпись прогресса в режиме ручной расстановки"""
         if self.strip_draw_mode == "manual":
-            total = self.strip_total_leds_label.text()
+            total = self._active_leds()
             placed = len(self.strip_manual_points)
+            offset = self._led_offset()
+            suffix = f" (первые {offset} пропущены)" if offset else ""
             self.strip_manual_progress_label.setText(
-                f"Установлено светодиодов: {placed} / {total}"
-                + ("  ✅ Готово, можно строить маппинг!" if str(placed) == total else "")
+                f"Установлено светодиодов: {placed} / {total}{suffix}"
+                + ("  ✅ Готово, можно строить маппинг!" if placed == total else "")
             )
         else:
             self.strip_manual_progress_label.setText("")
@@ -2970,9 +2985,10 @@ class MainWindow(QMainWindow):
             self,
             self.strip_canvas_width,
             self.strip_canvas_height,
-            self._total_leds(),
+            self._active_leds(),
             background=background,
             points=self.strip_manual_points,
+            label_offset=self._led_offset(),
         )
         try:
             editor.setGeometry(screen.geometry())
@@ -2996,9 +3012,11 @@ class MainWindow(QMainWindow):
         self.strip_draw_mode = "manual"
         self._update_manual_progress_label()
         self._draw_strip_canvas()
-        total = self._total_leds()
+        total = self._active_leds()
+        offset = self._led_offset()
+        prefix = f" (первые {offset} пропущены)" if offset else ""
         self.status_label.setText(
-            f"На весь экран расставлено {len(self.strip_manual_points)} из {total} диодов"
+            f"На весь экран расставлено {len(self.strip_manual_points)} из {total} диодов{prefix}"
         )
 
     def _on_capture_screen_background(self):
@@ -3033,6 +3051,30 @@ class MainWindow(QMainWindow):
             return max(1, int(self.strip_total_leds_label.text()))
         except (TypeError, ValueError):
             return max(1, int(self.config.get("wled_led_count", 90)))
+
+    def _led_offset(self):
+        """Сколько первых диодов пользователь решил пропустить."""
+        try:
+            return max(0, int(self.strip_offset_spin.value()))
+        except (AttributeError, TypeError, ValueError):
+            return max(0, int(self.config.get("led_start_offset", 0)))
+
+    def _active_leds(self):
+        """Сколько диодов реально участвуют в подсветке после пропуска."""
+        total = self._total_leds()
+        return max(1, total - min(self._led_offset(), total - 1))
+
+    def _on_led_offset_changed(self, value):
+        self._set_top("led_start_offset", int(value))
+        active = self._active_leds()
+        if len(self.strip_manual_points) > active:
+            del self.strip_manual_points[active:]
+        self._update_manual_progress_label()
+        self._draw_strip_canvas()
+        self.status_label.setText(
+            f"Пропущено первых диодов: {value}; активных: {active} — "
+            f"нажми «Построить маппинг»"
+        )
 
     def _on_apply_layout_preset(self):
         """Строит путь по шаблону «витки» — без рисования мышкой."""
@@ -3083,12 +3125,13 @@ class MainWindow(QMainWindow):
             )
             return
 
-        count = self._total_leds()
+        count = self._active_leds()
         wizard = MappingWizard(
             self, self.worker, count,
             self.config.get("screen_width", 1920),
             self.config.get("screen_height", 1080),
             getattr(self, "strip_background_pixmap", None),
+            index_offset=self._led_offset(),
         )
         accepted = wizard.exec_() == QDialog.Accepted
         points = list(wizard.result_points or [])
@@ -3098,7 +3141,8 @@ class MainWindow(QMainWindow):
 
         screen_w = int(self.config.get("screen_width", 1920))
         screen_h = int(self.config.get("screen_height", 1080))
-        self._set_top("wled_led_count", count)
+        self.worker.update_config(self.config)
+        self._set_top("wled_led_count", self._total_leds())
         self.worker.set_strip_mapper(points, screen_w, screen_h,
                                      exact_positions=False, led_count=count)
 
@@ -3111,10 +3155,12 @@ class MainWindow(QMainWindow):
         self.strip_manual_points = []
         self._update_strip_length_label()
         self._draw_strip_canvas()
+        offset = self._led_offset()
+        prefix = f", первые {offset} пропущены" if offset else ""
         self.status_label.setText(
-            f"Раскладка готова: {len(points)} опорных точек, {count} диодов"
+            f"Раскладка готова: {len(points)} опорных точек, {count} активных диодов{prefix}"
         )
-        log.info("Раскладка по развёртке: %s точек, %s диодов", len(points), count)
+        log.info("Раскладка по развёртке: %s точек, %s активных диодов", len(points), count)
 
     def _on_build_strip_mapping(self):
         """Строит маппинг на основе нарисованного пути или ручной расстановки"""
@@ -3126,21 +3172,20 @@ class MainWindow(QMainWindow):
         if canvas_w == 0 or canvas_h == 0:
             return
 
+        # Смещение первых диодов должно дойти до воркера раньше маппинга
+        self.worker.update_config(self.config)
+
         if self.strip_draw_mode == "manual":
             if len(self.strip_manual_points) < 2:
                 QMessageBox.warning(self, "Ошибка", "Расставь хотя бы 2 светодиода")
                 return
 
-            total_leds_str = self.strip_total_leds_label.text()
-            try:
-                total_leds = int(total_leds_str)
-            except ValueError:
-                total_leds = len(self.strip_manual_points)
+            total_leds = self._active_leds()
 
             if len(self.strip_manual_points) != total_leds:
                 reply = QMessageBox.question(
                     self, "Не все диоды расставлены",
-                    f"Расставлено {len(self.strip_manual_points)} из {total_leds} светодиодов.\n"
+                    f"Расставлено {len(self.strip_manual_points)} из {total_leds} активных светодиодов.\n"
                     f"Построить маппинг только для расставленных (остальные не будут светиться),\n"
                     f"или сначала доставить оставшиеся?",
                     QMessageBox.Yes | QMessageBox.No,
@@ -3153,12 +3198,18 @@ class MainWindow(QMainWindow):
                 (int(x * screen_w / canvas_w), int(y * screen_h / canvas_h))
                 for x, y in self.strip_manual_points
             ]
-            self._set_top("wled_led_count", len(scaled_path))
+            self._set_top("wled_led_count", self._total_leds())
             self.worker.set_strip_mapper(
                 scaled_path, screen_w, screen_h,
                 exact_positions=True, led_count=len(scaled_path),
             )
-            QMessageBox.information(self, "Успех", f"Маппинг построен вручную для {len(scaled_path)} светодиодов - точно там, где кликнул!")
+            offset = self._led_offset()
+            prefix = f" (первые {offset} пропущены)" if offset else ""
+            QMessageBox.information(
+                self, "Успех",
+                f"Маппинг построен вручную для {len(scaled_path)} светодиодов - "
+                f"точно там, где кликнул!{prefix}"
+            )
             return
 
         # Режимы straight / freehand - авто-распределение по длине пути
@@ -3171,13 +3222,19 @@ class MainWindow(QMainWindow):
             for x, y in self.strip_path_points
         ]
 
-        led_count = self._total_leds()
-        self._set_top("wled_led_count", led_count)
+        led_count = self._active_leds()
+        self._set_top("wled_led_count", self._total_leds())
         self.worker.set_strip_mapper(
             scaled_path, screen_w, screen_h,
             exact_positions=False, led_count=led_count,
         )
-        QMessageBox.information(self, "Успех", f"Маппинг построен для {len(scaled_path)} точек пути,\n{led_count} светодиодов")
+        offset = self._led_offset()
+        prefix = f", первые {offset} пропущены" if offset else ""
+        QMessageBox.information(
+            self, "Успех",
+            f"Маппинг построен для {len(scaled_path)} точек пути,\n"
+            f"{led_count} активных светодиодов{prefix}"
+        )
 
     def _on_save_strip_config(self):
         """Сохраняет конфигурацию ленты"""
@@ -3214,11 +3271,11 @@ class MainWindow(QMainWindow):
             for x, y in led_path
         ]
 
-        self.strip_total_leds_label.setText(str(led_count))
+        self.strip_total_leds_label.setText(str(led_count + self._led_offset()))
         if led_count:
             # Синхронизируем конфиг: иначе следующее сохранение настроек
             # вернуло бы старое число диодов и лента снова «обрезалась» бы
-            self.config["wled_led_count"] = led_count
+            self.config["wled_led_count"] = led_count + self._led_offset()
             self._queue_save()
 
         if exact_positions:
