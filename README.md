@@ -32,6 +32,8 @@ the portable EXE or ZIP from
 [Releases](https://github.com/arsinema/ledambilight/releases/latest).
 The application UI is currently in Russian.
 
+Ideas and priorities for future versions: [ROADMAP.md](ROADMAP.md).
+
 ## Скачать
 
 Готовый `LEDAmbilight.exe` (Windows 10/11, Python не нужен) лежит в разделе
