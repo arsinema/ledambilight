@@ -643,7 +643,6 @@ class CaptureRegionSelector(QDialog):
         self.setWindowFlags(
             Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool
         )
-        self.setAttribute(Qt.WA_DeleteOnClose, True)
         self.setCursor(Qt.CrossCursor)
         self.setMouseTracking(True)
         self.setWindowTitle("Область захвата")

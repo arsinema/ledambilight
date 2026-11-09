@@ -3,6 +3,14 @@
 Формат — [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 версии — [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [1.4.1] — 2026-11-09
+
+### Исправлено
+
+- **Падение после выбора области захвата.** Диалог выбора удалялся вместе с
+  результатом, и приложение падало сразу после протягивания прямоугольника.
+  Теперь результат читается до удаления диалога.
+
 ## [1.4.0] — 2026-11-09
 
 ### Добавлено
@@ -133,6 +141,7 @@
   приходили. Теперь кадр берётся в родном BGRA и переводится в RGB средствами
   numpy (`capture.bgra_to_rgb`).
 
+[1.4.1]: https://github.com/arsinema/ledambilight/releases/tag/v1.4.1
 [1.4.0]: https://github.com/arsinema/ledambilight/releases/tag/v1.4.0
 [1.3.0]: https://github.com/arsinema/ledambilight/releases/tag/v1.3.0
 [1.2.0]: https://github.com/arsinema/ledambilight/releases/tag/v1.2.0
