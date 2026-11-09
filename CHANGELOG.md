@@ -3,6 +3,20 @@
 Формат — [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 версии — [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [1.5.0] — 2026-11-09
+
+### Добавлено
+
+- **Автообновление из приложения** для onefile-сборки. Кнопка «Скачать и
+  обновить» скачивает `LEDAmbilight.exe` с GitHub, проверяет SHA-256 из API
+  релиза, показывает прогресс с отменой и после перезапуска подменяет exe через
+  отдельный PowerShell-скрипт. При ошибке копирования старый exe возвращается,
+  приложение запускается снова.
+- Для onedir/portable и установленной версии остаётся кнопка «Открыть релиз»:
+  там нужен установщик или zip целиком.
+- Тесты: 81 проверка, включая выбор ассета, проверку домена, откат в скрипте и
+  скачивание с локального HTTP-сервера.
+
 ## [1.4.1] — 2026-11-09
 
 ### Исправлено
@@ -141,6 +155,7 @@
   приходили. Теперь кадр берётся в родном BGRA и переводится в RGB средствами
   numpy (`capture.bgra_to_rgb`).
 
+[1.5.0]: https://github.com/arsinema/ledambilight/releases/tag/v1.5.0
 [1.4.1]: https://github.com/arsinema/ledambilight/releases/tag/v1.4.1
 [1.4.0]: https://github.com/arsinema/ledambilight/releases/tag/v1.4.0
 [1.3.0]: https://github.com/arsinema/ledambilight/releases/tag/v1.3.0

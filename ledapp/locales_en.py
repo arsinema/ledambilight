@@ -606,3 +606,18 @@ CATALOG.update({
     'Снимок (фон)': 'Screenshot (background)',
     'Ток на диод': 'Current per LED',
 })
+
+CATALOG.update({
+    'Загрузка обновления отменена': 'Update download cancelled',
+    'Не удалось запустить обновление:': 'Failed to start the update:',
+    'Не удалось скачать обновление': 'Failed to download update',
+    'Не удалось скачать обновление:': 'Failed to download update:',
+    'Обновление': 'Update',
+    'Обновление не установлено': 'Update not installed',
+    'Обновление скачано': 'Update downloaded',
+    'Отмена загрузки…': 'Cancelling download…',
+    'Перезапустить приложение и установить обновление сейчас?': 'Restart the app and install the update now?',
+    'Приложение перезапустится для обновления…': 'The app will restart to update…',
+    'Скачать и обновить': 'Download and update',
+    'Скачивание обновления…': 'Downloading update…',
+})

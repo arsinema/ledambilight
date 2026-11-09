@@ -1,4 +1,4 @@
-﻿name: CI
+name: CI
 
 on:
   push:
@@ -32,10 +32,13 @@ jobs:
           pip install -r requirements.txt
 
       - name: РџСЂРѕРІРµСЂРєР° СЃРёРЅС‚Р°РєСЃРёСЃР°
-        run: python -m compileall -q ledapp main.py selftest.py build_exe.py
+        run: python -m compileall -q ledapp tests main.py selftest.py build_exe.py build_installer.py
 
       - name: РЎР°РјРѕС‚РµСЃС‚
         run: python selftest.py
+
+      - name: Unit-С‚РµСЃС‚С‹
+        run: python -m unittest discover -s tests -v
 
   build:
     name: РЎР±РѕСЂРєР° exe

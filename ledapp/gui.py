@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import queue
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -23,7 +24,7 @@ from PyQt5.QtWidgets import (
     QSlider, QCheckBox, QComboBox, QDoubleSpinBox, QSpinBox,
     QLineEdit, QPlainTextEdit, QMessageBox, QGroupBox, QProgressBar,
     QApplication, QScrollArea, QSystemTrayIcon, QMenu, QAction, QDialog,
-    QTimeEdit, QShortcut
+    QTimeEdit, QShortcut, QProgressDialog
 )
 
 from .config import load_config, save_config
@@ -32,7 +33,7 @@ from .audio_engine import list_output_devices, is_available as audio_is_availabl
 from .updates import check_for_update
 from .support_bundle import build_report, default_report_name
 from .presets import apply_preset, export_preset, mapping_payload, validate_preset
-from . import autostart, i18n, __version__
+from . import autostart, i18n, updater, __version__
 
 log = logging.getLogger(__name__)
 
@@ -779,6 +780,8 @@ class CaptureRegionSelector(QDialog):
 
 class MainWindow(QMainWindow):
     update_checked = pyqtSignal(object)
+    update_download_progress = pyqtSignal(int, int)
+    update_download_finished = pyqtSignal(object, object, object)
 
     def __init__(self):
         super().__init__()
@@ -824,6 +827,12 @@ class MainWindow(QMainWindow):
 
         self._update_check_running = False
         self.update_checked.connect(self._on_update_checked)
+        self.update_download_progress.connect(self._on_update_download_progress)
+        self.update_download_finished.connect(self._on_update_download_finished)
+        self._update_progress_dialog = None
+        self._update_cancel = None
+        self._update_temp_dir = None
+        self._update_info = None
         self._report_pending = None
 
         self.current_profile = "desktop"
@@ -4232,11 +4241,121 @@ class MainWindow(QMainWindow):
         )
         if info.notes:
             box.setInformativeText(info.notes[:600])
+        update_btn = None
+        if updater.can_self_update(info):
+            update_btn = box.addButton("Скачать и обновить", QMessageBox.AcceptRole)
         open_btn = box.addButton("Открыть релиз", QMessageBox.AcceptRole)
         box.addButton("Позже", QMessageBox.RejectRole)
         box.exec_()
-        if box.clickedButton() is open_btn:
+        if update_btn is not None and box.clickedButton() is update_btn:
+            self._start_update_download(info)
+        elif box.clickedButton() is open_btn:
             QDesktopServices.openUrl(QUrl(info.url))
+
+    def _start_update_download(self, info):
+        """Скачивает exe обновления в фоне с прогрессом и отменой."""
+        if self._update_progress_dialog is not None:
+            return
+        self._update_info = info
+        self._update_cancel = threading.Event()
+        self._update_temp_dir = tempfile.mkdtemp(prefix="ledambilight-update-")
+        dialog = QProgressDialog("Скачивание обновления…", "Отмена", 0, 100, self)
+        dialog.setWindowTitle("Обновление")
+        dialog.setWindowModality(Qt.WindowModal)
+        dialog.setAutoClose(False)
+        dialog.setAutoReset(False)
+        dialog.setMinimumDuration(0)
+        dialog.canceled.connect(self._cancel_update_download)
+        self._update_progress_dialog = dialog
+        dialog.show()
+        threading.Thread(
+            target=self._download_update_worker,
+            args=(info, self._update_temp_dir, self._update_cancel),
+            daemon=True,
+        ).start()
+
+    def _download_update_worker(self, info, temp_dir, cancel):
+        try:
+            path = updater.download_update(
+                info,
+                temp_dir,
+                progress=lambda done, total: self.update_download_progress.emit(done, total),
+                cancel=cancel,
+            )
+            self.update_download_finished.emit(path, None, info)
+        except updater.UpdateCancelled as exc:
+            self.update_download_finished.emit(None, exc, info)
+        except Exception as exc:
+            self.update_download_finished.emit(None, exc, info)
+
+    def _cancel_update_download(self):
+        if self._update_cancel is not None:
+            self._update_cancel.set()
+        if self._update_progress_dialog is not None:
+            self._update_progress_dialog.setLabelText("Отмена загрузки…")
+
+    def _on_update_download_progress(self, done, total):
+        dialog = self._update_progress_dialog
+        if dialog is None:
+            return
+        if total > 0:
+            dialog.setMaximum(total)
+            dialog.setValue(min(done, total))
+            dialog.setLabelText(
+                f"Скачивание обновления… {done / (1024 * 1024):.1f} / "
+                f"{total / (1024 * 1024):.1f} МБ"
+            )
+        else:
+            dialog.setLabelText(f"Скачивание обновления… {done / (1024 * 1024):.1f} МБ")
+
+    def _on_update_download_finished(self, path, error, info):
+        dialog = self._update_progress_dialog
+        self._update_progress_dialog = None
+        if dialog is not None:
+            dialog.close()
+            dialog.deleteLater()
+        self._update_cancel = None
+
+        if error is not None:
+            if self._update_temp_dir:
+                shutil.rmtree(self._update_temp_dir, ignore_errors=True)
+            self._update_temp_dir = None
+            if isinstance(error, updater.UpdateCancelled):
+                self.status_label.setText("Загрузка обновления отменена")
+            else:
+                log.error("Не удалось скачать обновление: %s", error)
+                QMessageBox.critical(
+                    self, "Обновление", f"Не удалось скачать обновление:\n{error}"
+                )
+            return
+
+        answer = QMessageBox.question(
+            self, "Обновление скачано",
+            f"Версия {info.latest} скачана и проверена по SHA-256.\n\n"
+            f"Перезапустить приложение и установить обновление сейчас?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        )
+        if answer != QMessageBox.Yes:
+            if self._update_temp_dir:
+                shutil.rmtree(self._update_temp_dir, ignore_errors=True)
+            self._update_temp_dir = None
+            self.status_label.setText("Обновление не установлено")
+            return
+
+        try:
+            updater.apply_self_update(path)
+        except Exception as exc:
+            log.exception("Не удалось запустить автообновление")
+            QMessageBox.critical(
+                self, "Обновление", f"Не удалось запустить обновление:\n{exc}"
+            )
+            return
+        self._update_temp_dir = None
+        self.status_label.setText("Приложение перезапустится для обновления…")
+        self._really_quit = True
+        self.close()
+        QApplication.quit()
 
     def _apply_scene(self, name):
         """Применяет готовый пресет, выставляя значения виджетов.
