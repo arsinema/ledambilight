@@ -26,6 +26,8 @@ per-LED colors to addressable LED strips:
 - Full-screen LED layout editor: click every LED right where it is on the monitor
 - Profiles, HUD mask, colour calibration, audio-reactive modes, phone remote, MQTT
 - Skip the first N LEDs (leave the start of a strip dark) and keep the rest mapped
+- One-click support report (logs + redacted config + mapping) and shareable presets
+- Home Assistant MQTT Discovery: a light entity appears automatically
 
 You need an addressable strip (WS2812B/SK6812) and a 5 V power supply. Download
 the portable EXE or ZIP from
@@ -261,6 +263,10 @@ OpenCV для сборки и работы не нужен: dxcam отдаёт �
 - **Проверка обновлений** (вкладка «Система»): приложение спрашивает у GitHub
   номер последнего релиза и показывает, доступна ли новая версия. Проверку при
   запуске можно выключить; наружу уходит только версия в User-Agent
+- **Отчёт для поддержки** (вкладка «Система»): ZIP с логами, конфигом без
+  IP/MAC, текущим маппингом и диагностикой — приложи его к issue
+- **Пресеты `.ledpreset`**: экспорт/импорт сцен, калибровки, фильтров и
+  маппинга; сетевые настройки в пресет не попадают
 - Кнопка **«Диагностика»**: проверяет связь с платой, её версию, число диодов,
   уровень Wi-Fi, состояние захвата и маппинга — и подсказывает, что не так
 - **Превью зон диодов**: на вкладке «Просмотр захвата» можно наложить на кадр
@@ -278,7 +284,8 @@ OpenCV для сборки и работы не нужен: dxcam отдаёт �
 - **Пульт с телефона**: встроенный веб-сервер, `http://<ip-компьютера>:8765` —
   включение, яркость, сцены, звук, гашение. Ничего ставить не нужно
 - **MQTT / Home Assistant** (опционально, нужен `paho-mqtt`): состояние в
-  `<префикс>/state`, команды в `<префикс>/set`
+  `<префикс>/state`, команды в `<префикс>/set`; с включённым Discovery
+  Home Assistant сам создаёт light-сущность (вкл/выкл, яркость, доступность)
 
 **Сцены и автоматизация**
 - **Пресеты сцен** «Кино / Игра / Ночь / Яркий день» — один клик ставит
@@ -323,6 +330,8 @@ ledapp/capture.py            — захват экрана, зоны/квадр�
 ledapp/color_engine.py       — калибровка, фильтры, сглаживание, доминантный цвет
 ledapp/worker.py             — фоновый поток (asyncio) + Qt-сигналы
 ledapp/updates.py            — проверка обновлений через GitHub Releases
+ledapp/support_bundle.py     — ZIP-отчёт для поддержки (логи, конфиг, маппинг)
+ledapp/presets.py            — экспорт/импорт пресетов настроек и маппинга
 ledapp/audio_engine.py       — захват системного звука (loopback) и анализ
 ledapp/strip_mapper.py       — сопоставление диодов координатам экрана
 ledapp/weather.py            — цвет по погоде для дежурного режима

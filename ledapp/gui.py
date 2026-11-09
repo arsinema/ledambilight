@@ -2,8 +2,13 @@
 Главное окно приложения.
 """
 
+import json
 import logging
+import os
 import queue
+import subprocess
+import sys
+import tempfile
 import threading
 import time
 
@@ -25,6 +30,8 @@ from .config import load_config, save_config
 from .worker import LedWorker
 from .audio_engine import list_output_devices, is_available as audio_is_available
 from .updates import check_for_update
+from .support_bundle import build_report, default_report_name
+from .presets import apply_preset, export_preset, mapping_payload, validate_preset
 from . import autostart, __version__
 
 log = logging.getLogger(__name__)
@@ -669,6 +676,7 @@ class MainWindow(QMainWindow):
 
         self._update_check_running = False
         self.update_checked.connect(self._on_update_checked)
+        self._report_pending = None
 
         self.current_profile = "desktop"
         self._really_quit = False
@@ -3666,11 +3674,54 @@ class MainWindow(QMainWindow):
         self.mqtt_prefix_edit.editingFinished.connect(
             lambda: self._set_nested("mqtt", "prefix", self.mqtt_prefix_edit.text().strip()))
         mqtt_form.addRow("Префикс топиков:", self.mqtt_prefix_edit)
+
+        mqtt_discovery_cb = QCheckBox("Публиковать Discovery для Home Assistant")
+        mqtt_discovery_cb.setChecked(mqtt_cfg.get("discovery", True))
+        mqtt_discovery_cb.setToolTip(
+            "Home Assistant сам создаст сущность «LED Ambilight»:\n"
+            "вкл/выкл, яркость и сцена — без ручного YAML."
+        )
+        mqtt_discovery_cb.stateChanged.connect(
+            lambda s: self._set_nested("mqtt", "discovery", s == Qt.Checked)
+        )
+        mqtt_form.addRow(mqtt_discovery_cb)
+
         mqtt_form.addRow(QLabel(
             "Состояние: <префикс>/state, команды: <префикс>/set (JSON).\n"
             "Нужен пакет paho-mqtt и свой брокер (например, Mosquitto)."
         ))
         layout.addWidget(mqtt_box)
+
+        # --- помощь и поддержка ---
+        support_box = QGroupBox("Помощь и поддержка")
+        support_form = QFormLayout(support_box)
+        support_form.addRow(QLabel(
+            "Если что-то не работает, собери отчёт: внутри логи, конфиг\n"
+            "с вырезанными IP/MAC, текущий маппинг и диагностика.\n"
+            "Отчёт не отправляется автоматически — приложи ZIP к issue."
+        ))
+        self.report_btn = QPushButton("Собрать отчёт для поддержки")
+        self.report_btn.clicked.connect(self._on_support_bundle)
+        support_form.addRow(self.report_btn)
+        layout.addWidget(support_box)
+
+        # --- пресеты ---
+        presets_box = QGroupBox("Пресеты настроек")
+        presets_form = QFormLayout(presets_box)
+        presets_form.addRow(QLabel(
+            "Один файл .ledpreset: сцены, калибровка, фильтры и маппинг.\n"
+            "Удобно перенести настройки на другой ПК или поделиться."
+        ))
+        presets_row = QHBoxLayout()
+        export_preset_btn = QPushButton("Экспортировать пресет…")
+        export_preset_btn.clicked.connect(self._on_export_preset)
+        import_preset_btn = QPushButton("Импортировать пресет…")
+        import_preset_btn.clicked.connect(self._on_import_preset)
+        presets_row.addWidget(export_preset_btn)
+        presets_row.addWidget(import_preset_btn)
+        presets_row.addStretch()
+        presets_form.addRow(presets_row)
+        layout.addWidget(presets_box)
 
         # --- обновления ---
         updates_box = QGroupBox("Обновления")
@@ -3712,6 +3763,146 @@ class MainWindow(QMainWindow):
             self._setup_hotkeys()
         else:
             self.hotkey_filter.set_enabled(True)
+
+    def _on_export_preset(self):
+        """Сохраняет настройки и маппинг в .ledpreset."""
+        from PyQt5.QtWidgets import QFileDialog
+
+        initial = os.path.join(os.path.expanduser("~"), "LedAmbilight.ledpreset")
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Экспортировать пресет", initial,
+            "LED Ambilight preset (*.ledpreset);;JSON (*.json)",
+        )
+        if not path:
+            return
+        if not os.path.splitext(path)[1]:
+            path += ".ledpreset"
+        try:
+            data = export_preset(
+                self.config,
+                mapping=self.worker.mapping_snapshot(),
+                name=os.path.splitext(os.path.basename(path))[0],
+            )
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(data, handle, ensure_ascii=False, indent=2)
+        except Exception as exc:
+            log.exception("Не удалось экспортировать пресет")
+            QMessageBox.critical(self, "Пресет", f"Не удалось сохранить пресет:\n{exc}")
+            return
+        self.status_label.setText(f"Пресет сохранён: {path}")
+        QMessageBox.information(
+            self, "Пресет сохранён",
+            f"Файл:\n{path}\n\n"
+            f"Маппинг: {'да' if data.get('mapping') else 'нет'}",
+        )
+
+    def _on_import_preset(self):
+        """Применяет .ledpreset; для обновления интерфейса нужен перезапуск."""
+        from PyQt5.QtWidgets import QFileDialog
+
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Импортировать пресет", os.path.expanduser("~"),
+            "LED Ambilight preset (*.ledpreset);;JSON (*.json)",
+        )
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+            preset = validate_preset(data)
+        except Exception as exc:
+            QMessageBox.critical(self, "Пресет", f"Файл не подходит:\n{exc}")
+            return
+
+        sections = ", ".join(sorted(preset["settings"])) or "—"
+        mapping_note = "с маппингом" if preset.get("mapping") else "без маппинга"
+        answer = QMessageBox.question(
+            self, "Импорт пресета",
+            f"Пресет: {preset.get('name') or os.path.basename(path)}\n"
+            f"Версия: {preset.get('version')} ({mapping_note})\n\n"
+            f"Будет заменено: {sections}\n\n"
+            f"Применить? Интерфейс обновится после перезапуска.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+
+        try:
+            self.config = apply_preset(self.config, preset)
+            save_config(self.config)
+            self.worker.update_config(self.config)
+            payload = mapping_payload(preset)
+            if payload is not None:
+                self.worker.set_strip_mapper(*payload)
+        except Exception as exc:
+            log.exception("Не удалось применить пресет")
+            QMessageBox.critical(self, "Пресет", f"Не удалось применить пресет:\n{exc}")
+            return
+
+        restart = QMessageBox.question(
+            self, "Пресет применён",
+            "Настройки применены и сохранены.\n\n"
+            "Перезапустить приложение сейчас, чтобы интерфейс показал новые значения?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        )
+        if restart == QMessageBox.Yes:
+            self._restart_application()
+        else:
+            self.status_label.setText("Пресет применён — перезапусти приложение")
+
+    def _restart_application(self):
+        """Перезапускает exe/скрипт через короткий .bat после выхода."""
+        try:
+            if getattr(sys, "frozen", False):
+                command = [sys.executable]
+            else:
+                command = [sys.executable, os.path.abspath(sys.argv[0])]
+                command += list(sys.argv[1:])
+            quoted = " ".join(f'"{part}"' for part in command)
+            batch = os.path.join(tempfile.gettempdir(), "ledambilight-restart.bat")
+            with open(batch, "w", encoding="mbcs", errors="replace") as handle:
+                handle.write(
+                    "@echo off\r\n"
+                    "ping 127.0.0.1 -n 9 >nul\r\n"
+                    f"start \"\" {quoted}\r\n"
+                    "del \"%~f0\"\r\n"
+                )
+            subprocess.Popen(
+                ["cmd", "/c", batch],
+                close_fds=True,
+                creationflags=(
+                    getattr(subprocess, "DETACHED_PROCESS", 0)
+                    | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+                ),
+            )
+        except Exception:
+            log.exception("Не удалось перезапустить приложение")
+            self.status_label.setText("Пресет применён — перезапусти приложение вручную")
+            return
+        self._really_quit = True
+        self.close()
+        QApplication.quit()
+
+    def _on_support_bundle(self):
+        """Собирает ZIP с логами, конфигом и диагностикой для issue."""
+        from PyQt5.QtWidgets import QFileDialog
+
+        if self._report_pending:
+            return
+        initial = os.path.join(os.path.expanduser("~"), default_report_name())
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Сохранить отчёт для поддержки", initial, "ZIP (*.zip)"
+        )
+        if not path:
+            return
+        if not path.lower().endswith(".zip"):
+            path += ".zip"
+        self._report_pending = path
+        self.report_btn.setEnabled(False)
+        self.status_label.setText("Собираю диагностику для отчёта…")
+        self.worker.run_diagnostics()
 
     # -- Проверка обновлений --
 
@@ -4035,6 +4226,7 @@ class MainWindow(QMainWindow):
                 submit=self._remote_queue.put,
                 state_snapshot=lambda: self._remote_state,
                 on_command=self._on_mqtt_command,
+                discovery=cfg.get("discovery", True),
             )
             if bridge.start():
                 self._mqtt = bridge
@@ -4056,6 +4248,11 @@ class MainWindow(QMainWindow):
 
     def _on_mqtt_command(self, payload):
         """Команда из MQTT (выполняется в потоке GUI)."""
+        state = payload.get("state")
+        if isinstance(state, str) and state.upper() in ("ON", "OFF"):
+            want = state.upper() == "ON"
+            if want != self._capture_running:
+                self._on_tray_toggle_capture()
         if "capture" in payload:
             want = bool(payload["capture"])
             if want != self._capture_running:
@@ -4424,7 +4621,33 @@ class MainWindow(QMainWindow):
             self.on_frame_preview(frame)
 
     def on_diagnostics(self, text):
-        """Показывает отчёт диагностики в отдельном окне."""
+        """Показывает отчёт диагностики или кладёт его в отчёт поддержки."""
+        if self._report_pending:
+            path = self._report_pending
+            self._report_pending = None
+            self.report_btn.setEnabled(True)
+            try:
+                mapping = self.worker.mapping_snapshot()
+                out = build_report(path, self.config, diagnostics=text, mapping=mapping)
+                size_kb = max(1, os.path.getsize(out) // 1024)
+                self.status_label.setText("Отчёт для поддержки готов")
+                QMessageBox.information(
+                    self, "Отчёт готов",
+                    f"Файл сохранён:\n{out}\n\n"
+                    f"Размер: {size_kb} КБ. IP и MAC вырезаны. "
+                    f"Приложи ZIP к issue на GitHub.",
+                )
+                QDesktopServices.openUrl(
+                    QUrl.fromLocalFile(os.path.dirname(out))
+                )
+            except Exception as exc:
+                log.exception("Не удалось собрать отчёт для поддержки")
+                self.status_label.setText("Не удалось собрать отчёт")
+                QMessageBox.critical(
+                    self, "Ошибка", f"Не удалось собрать отчёт:\n{exc}"
+                )
+            return
+
         dialog = QDialog(self)
         dialog.setWindowTitle("Диагностика")
         dialog.resize(620, 460)

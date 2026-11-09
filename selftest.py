@@ -42,7 +42,9 @@ from ledapp.color_engine import (
     process_pixel_frame,
 )
 from ledapp.config import DEFAULT_CONFIG, _deep_merge, _sanitize
+from ledapp.presets import apply_preset, export_preset, validate_preset
 from ledapp.strip_mapper import StripMapper
+from ledapp.support_bundle import redact_config, redact_text
 from ledapp.updates import is_newer, version_tuple
 from ledapp.win_utils import is_fullscreen_app
 from ledapp.wled_controller import WLEDController
@@ -442,6 +444,43 @@ def test_autopause_media():
               for name in ("kinopoisk.exe", "ivi.exe", "wink.exe", "okko.exe")))
 
 
+def test_support_and_presets():
+    print("\n[14] Отчёт поддержки и пресеты")
+    cfg = copy.deepcopy(DEFAULT_CONFIG)
+    cfg["wled_host"] = "192.168.10.20"
+    cfg["device_address"] = "AA:BB:CC:DD:EE:FF"
+    cfg["mqtt"]["host"] = "192.168.10.30"
+    cfg["note"] = "board 192.168.10.20, mac AA:BB:CC:DD:EE:FF"
+    red = redact_config(cfg)
+    check("IP и MAC вырезаны из конфига",
+          "192.168.10.20" not in json.dumps(red, ensure_ascii=False)
+          and "AA:BB:CC:DD:EE:FF" not in json.dumps(red, ensure_ascii=False))
+    check("вложенный mqtt.host вырезан", red["mqtt"]["host"] == "***")
+    check("redact_text прячет IP и MAC",
+          "192.168." not in redact_text("ip 192.168.1.5 mac AA:BB:CC:DD:EE:FF"))
+
+    mapping = {
+        "led_count": 87, "screen_width": 1920, "screen_height": 1080,
+        "strip_width": 10, "exact_positions": True,
+        "led_path": [[10, 10], [100, 100], [500, 500]],
+    }
+    preset = export_preset(cfg, mapping, "Test")
+    check("в пресет не попадает wled_host",
+          "wled_host" not in preset["settings"])
+    check("пресет проходит валидацию",
+          validate_preset(preset)["name"] == "Test")
+    applied = apply_preset(cfg, preset)
+    check("пресет применяет калибровку и маппинг",
+          applied["calibration"]["r_gain"] == cfg["calibration"]["r_gain"]
+          and validate_preset(preset)["mapping"]["led_count"] == 87)
+    try:
+        validate_preset({"format": "wrong"})
+        rejected = False
+    except ValueError:
+        rejected = True
+    check("чужой файл отклоняется", rejected)
+
+
 def main():
     print("=" * 60)
     print("Самотест LED Ambilight")
@@ -460,6 +499,7 @@ def main():
     test_capture_color()
     test_updates()
     test_autopause_media()
+    test_support_and_presets()
 
     print("\n" + "=" * 60)
     if FAILED:

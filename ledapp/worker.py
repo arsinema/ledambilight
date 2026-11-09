@@ -255,6 +255,20 @@ class LedWorker(QThread):
         self._queue.put(("set_strip_mapper",
                          (led_path, screen_width, screen_height, exact_positions, led_count)))
 
+    def mapping_snapshot(self):
+        """Копия текущего маппинга для отчёта поддержки (без изменения состояния)."""
+        mapper = self.strip_mapper
+        if mapper is None or not getattr(mapper, "led_path", None):
+            return None
+        return {
+            "led_count": int(mapper.led_count),
+            "screen_width": int(mapper.screen_width),
+            "screen_height": int(mapper.screen_height),
+            "strip_width": int(getattr(mapper, "last_strip_width", 10)),
+            "exact_positions": bool(getattr(mapper, "last_exact_positions", False)),
+            "led_path": [[float(x), float(y)] for x, y in mapper.led_path],
+        }
+
     def save_strip_mapping(self, filepath: str):
         self._queue.put(("save_strip_mapping", filepath))
 

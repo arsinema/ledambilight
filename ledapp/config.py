@@ -190,7 +190,8 @@ DEFAULT_CONFIG = {
         "enabled": False,
         "host": "127.0.0.1",
         "port": 1883,
-        "prefix": "ledambilight"
+        "prefix": "ledambilight",
+        "discovery": True
     },
 
     # Проверка обновлений на GitHub Releases
