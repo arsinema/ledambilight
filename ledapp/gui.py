@@ -3177,6 +3177,9 @@ class MainWindow(QMainWindow):
             return
         self._set_top("monitor_index", value)
         self._detect_screen_size()
+        if self.config.get("capture_region"):
+            self._set_top("capture_region", None)
+            self.capture_region_label.setText(self._capture_region_text())
         self.worker.update_config(self.config)
         self.worker.clear_strip_mapping()
         self.status_label.setText("Монитор выбран — построй маппинг заново")
@@ -3197,7 +3200,7 @@ class MainWindow(QMainWindow):
 
     def _on_select_capture_region(self):
         """Полноэкранный выбор области; координаты — в пикселях экрана."""
-        screen = QApplication.primaryScreen()
+        screen = self._selected_screen() or QApplication.primaryScreen()
         if screen is None:
             QMessageBox.warning(self, "Захват экрана", "Не удалось получить доступ к экрану")
             return
@@ -3211,6 +3214,11 @@ class MainWindow(QMainWindow):
             self.config.get("screen_height", 1080),
             self,
         )
+        try:
+            selector.setScreen(screen)
+            selector.setGeometry(screen.geometry())
+        except Exception:
+            log.debug("Не удалось перевести выбор области на выбранный монитор", exc_info=True)
         selector.showFullScreen()
         accepted = selector.exec_() == QDialog.Accepted
         region = selector.region if accepted else None
@@ -3245,7 +3253,7 @@ class MainWindow(QMainWindow):
 
     def _on_fullscreen_manual_points(self):
         """Открывает расстановку диодов на весь монитор, без панели задач."""
-        screen = QApplication.primaryScreen()
+        screen = self._selected_screen() or QApplication.primaryScreen()
         if screen is None:
             QMessageBox.warning(self, "Расстановка", "Не удалось получить экран")
             return
