@@ -44,6 +44,7 @@ from ledapp.color_engine import (
 from ledapp.config import DEFAULT_CONFIG, _deep_merge, _sanitize
 from ledapp.strip_mapper import StripMapper
 from ledapp.updates import is_newer, version_tuple
+from ledapp.win_utils import is_fullscreen_app
 from ledapp.wled_controller import WLEDController
 from ledapp.wled_serial_controller import WLEDSerialController
 
@@ -423,6 +424,20 @@ def test_updates():
     check("1.2.0-beta новее 1.1.9", is_newer("1.2.0-beta", "1.1.9"))
 
 
+def test_autopause_media():
+    print("\n[13] Автопауза и просмотр видео")
+    check("полноэкранный режим определяется как bool",
+          isinstance(is_fullscreen_app(), bool))
+    media = DEFAULT_CONFIG["process_profile_map"]
+    check("PotPlayer и MPV считаются movie",
+          media.get("potplayermini64.exe") == "movie"
+          and media.get("mpv.exe") == "movie",
+          str(media))
+    check("Kinopoisk/IVI/Wink/Okko считаются movie",
+          all(media.get(name) == "movie"
+              for name in ("kinopoisk.exe", "ivi.exe", "wink.exe", "okko.exe")))
+
+
 def main():
     print("=" * 60)
     print("Самотест LED Ambilight")
@@ -440,6 +455,7 @@ def main():
     test_ui_mask_shift()
     test_capture_color()
     test_updates()
+    test_autopause_media()
 
     print("\n" + "=" * 60)
     if FAILED:

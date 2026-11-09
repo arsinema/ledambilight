@@ -50,3 +50,24 @@ def idle_seconds() -> int:
     except Exception:
         log.debug("Не удалось получить время простоя", exc_info=True)
         return 0
+
+
+def is_fullscreen_app() -> bool:
+    """True, если на переднем плане полноэкранное приложение.
+
+    Windows сама знает это через SHQueryUserNotificationState:
+      2 — QUNS_BUSY (полноэкранное приложение),
+      3 — QUNS_RUNNING_D3D_FULL_SCREEN (игра/видео в эксклюзивном режиме),
+      4 — QUNS_PRESENTATION_MODE (показ слайдов).
+    Нужно автопаузе: иначе она принимает тишину в фильме за простой и гасит
+    подсветку посреди просмотра.
+    """
+    try:
+        state = ctypes.c_int()
+        hr = ctypes.windll.shell32.SHQueryUserNotificationState(ctypes.byref(state))
+        if hr != 0:
+            return False
+        return state.value in (2, 3, 4)
+    except Exception:
+        log.debug("Не удалось определить полноэкранный режим", exc_info=True)
+        return False

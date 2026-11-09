@@ -3,6 +3,21 @@
 Формат — [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 версии — [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [1.0.3] — 2026-11-09
+
+### Исправлено
+
+- **Автопауза гасила подсветку во время фильма или сериала.** Если сцена
+  несколько секунд была статичной, а мышь не двигалась дольше настроенного
+  простоя, приложение решало, что пользователь ушёл, останавливало захват и
+  включало дежурный режим или чёрный цвет. Теперь автопауза по простою не
+  срабатывает, пока открыто полноэкранное приложение (`SHQueryUserNotificationState`)
+  или активен профиль movie/game. Если пауза уже случилась, а видео включилось,
+  подсветка возвращается сама.
+- В список видео-процессов добавлены PotPlayer, MPV, MPC-BE, KMPlayer, GOM,
+  Windows Media Player, Plex, Kodi, «Кинопоиск», IVI, Wink и Okko — окно плеера
+  не на весь экран тоже больше не считается простоем.
+
 ## [1.0.2] — 2026-11-06
 
 ### Добавлено
@@ -59,6 +74,7 @@
   приходили. Теперь кадр берётся в родном BGRA и переводится в RGB средствами
   numpy (`capture.bgra_to_rgb`).
 
+[1.0.3]: https://github.com/arsinema/ledambilight/releases/tag/v1.0.3
 [1.0.2]: https://github.com/arsinema/ledambilight/releases/tag/v1.0.2
 [1.0.1]: https://github.com/arsinema/ledambilight/releases/tag/v1.0.1
 [1.0.0]: https://github.com/arsinema/ledambilight/releases/tag/v1.0.0

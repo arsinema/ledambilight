@@ -530,9 +530,9 @@ class MainWindow(QMainWindow):
         else:
             minutes = int(cfg.get("idle_minutes", 5) or 0)
             if minutes > 0 and idle_seconds() >= minutes * 60:
-                # Кино смотрят, не трогая мышь: Windows считает это простоем,
-                # но подсветку гасить нельзя, пока картинка меняется
-                if not self.worker.is_screen_moving():
+                # Кино смотрят, не трогая мышь: Windows считает это простоем.
+                # Не гасим ленту, если идёт видео/игра или картинка меняется.
+                if not self._is_media_active() and not self.worker.is_screen_moving():
                     reason = "нет активности"
 
         if reason and self._capture_running and not self._auto_paused:
@@ -542,6 +542,21 @@ class MainWindow(QMainWindow):
             log.info("Автопауза: %s", reason)
         elif not reason and self._auto_paused:
             self._resume_after_pause()
+
+    def _is_media_active(self):
+        """Идёт просмотр видео или игра — автопауза по простою запрещена.
+
+        Полноэкранный режим ловит любой плеер и игру (SHQueryUserNotificationState),
+        а профиль movie/game — ещё и окно браузера или плеера не на весь экран.
+        Без этой проверки тихая сцена в фильме через 5 минут простоя принималась
+        за «пользователь ушёл», захват останавливался, и лента уходила в дежурный
+        режим или гасла.
+        """
+        from .win_utils import is_fullscreen_app
+
+        if is_fullscreen_app():
+            return True
+        return getattr(self, "current_profile", "") in ("movie", "game")
 
     def _resume_after_pause(self):
         self._auto_paused = False
