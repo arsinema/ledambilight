@@ -359,6 +359,264 @@ class MappingWizard(QDialog):
         super().reject()
 
 
+class FullscreenPointEditor(QDialog):
+    """Полноэкранная расстановка светодиодов по их реальным местам.
+
+    Открывается поверх панели задач, показывает снимок рабочего стола и даёт
+    кликать прямо по местам, где наклеены диоды. Точки хранятся в координатах
+    холста вкладки, поэтому после «Готово» сразу попадают в ручной режим.
+    """
+
+    def __init__(self, parent, canvas_w, canvas_h, total_leds,
+                 background=None, points=None):
+        super().__init__(parent)
+        self.setWindowTitle("Расстановка светодиодов")
+        self.setWindowFlags(
+            Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Dialog
+        )
+        self.setModal(True)
+        self.setCursor(Qt.CrossCursor)
+        self.setMouseTracking(True)
+        self.setFocusPolicy(Qt.StrongFocus)
+
+        self._canvas_w = max(1, int(canvas_w))
+        self._canvas_h = max(1, int(canvas_h))
+        self._total = max(1, int(total_leds))
+        self._background = background
+        self._background_scaled = None
+        self._show_background = False
+        self.points = []
+        for point in (points or []):
+            try:
+                self.points.append((float(point[0]), float(point[1])))
+            except (TypeError, IndexError, ValueError):
+                continue
+        self.points = self.points[:self._total]
+        self._message = ""
+        self._message_timer = QTimer(self)
+        self._message_timer.setSingleShot(True)
+        self._message_timer.timeout.connect(self._clear_message)
+
+        screen = QApplication.primaryScreen()
+        if screen is not None:
+            self.setGeometry(screen.geometry())
+        self._rescale_background()
+
+    # ------------------------------------------------------------------
+
+    def _rescale_background(self):
+        if self._background is None:
+            self._background_scaled = None
+            return
+        size = self.size()
+        if size.width() <= 0 or size.height() <= 0:
+            self._background_scaled = None
+            return
+        self._background_scaled = self._background.scaled(
+            size, Qt.IgnoreAspectRatio, Qt.SmoothTransformation
+        )
+
+    def resizeEvent(self, event):  # noqa: N802 (Qt API)
+        self._rescale_background()
+        super().resizeEvent(event)
+
+    def showEvent(self, event):  # noqa: N802 (Qt API)
+        super().showEvent(event)
+        self.setFocus(Qt.OtherFocusReason)
+        # Полноэкранное окно должно оказаться выше панели задач и других
+        # topmost-окон (например, закреплённого окна чата).
+        QTimer.singleShot(50, self._force_foreground)
+
+    def _force_foreground(self):
+        try:
+            import ctypes
+            hwnd = int(self.winId())
+            if not hwnd:
+                return
+            user32 = ctypes.windll.user32
+            kernel32 = ctypes.windll.kernel32
+            foreground = user32.GetForegroundWindow()
+            foreground_tid = user32.GetWindowThreadProcessId(foreground, None)
+            current_tid = kernel32.GetCurrentThreadId()
+            user32.AttachThreadInput(current_tid, foreground_tid, True)
+            try:
+                user32.BringWindowToTop(hwnd)
+                user32.SetForegroundWindow(hwnd)
+                user32.SetActiveWindow(hwnd)
+            finally:
+                user32.AttachThreadInput(current_tid, foreground_tid, False)
+            # HWND_TOPMOST + SWP_NOSIZE | SWP_NOMOVE | SWP_SHOWWINDOW
+            user32.SetWindowPos(
+                hwnd, -1, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0040
+            )
+        except Exception:
+            log.debug("Не удалось поднять полноэкранный редактор", exc_info=True)
+
+    # ------------------------------------------------------------------
+
+    def _to_canvas(self, x, y):
+        return (
+            min(max(x / max(1, self.width()) * self._canvas_w, 0),
+                self._canvas_w - 1),
+            min(max(y / max(1, self.height()) * self._canvas_h, 0),
+                self._canvas_h - 1),
+        )
+
+    def _to_screen(self, x, y):
+        return (
+            x / self._canvas_w * self.width(),
+            y / self._canvas_h * self.height(),
+        )
+
+    def _show_message(self, text, seconds=2.5):
+        self._message = text
+        self._message_timer.start(int(seconds * 1000))
+        self.update()
+
+    def _clear_message(self):
+        self._message = ""
+        self.update()
+
+    def _undo(self):
+        if self.points:
+            self.points.pop()
+            self.update()
+
+    # ------------------------------------------------------------------
+
+    def mousePressEvent(self, event):  # noqa: N802 (Qt API)
+        if event.button() == Qt.LeftButton:
+            if len(self.points) >= self._total:
+                self._show_message(f"Все {self._total} точек уже расставлены")
+                return
+            self.points.append(self._to_canvas(event.x(), event.y()))
+            self.update()
+        elif event.button() == Qt.RightButton:
+            self._open_menu(event.globalPos())
+
+    def keyPressEvent(self, event):  # noqa: N802 (Qt API)
+        if event.key() in (Qt.Key_Return, Qt.Key_Enter):
+            self.accept()
+        elif event.key() == Qt.Key_Escape:
+            self.reject()
+        elif event.key() in (Qt.Key_Backspace, Qt.Key_Delete):
+            self._undo()
+        elif (event.key() == Qt.Key_Z
+              and event.modifiers() & Qt.ControlModifier):
+            self._undo()
+        elif event.key() == Qt.Key_B:
+            if self._background_scaled is not None:
+                self._show_background = not self._show_background
+                self._show_message(
+                    "Фон со снимком экрана включён" if self._show_background
+                    else "Фон выключен"
+                )
+        else:
+            super().keyPressEvent(event)
+
+    def _open_menu(self, pos):
+        menu = QMenu(self)
+        undo = menu.addAction("Убрать последнюю точку")
+        undo.setEnabled(bool(self.points))
+        clear = menu.addAction("Очистить всё")
+        clear.setEnabled(bool(self.points))
+        menu.addSeparator()
+        done = menu.addAction(f"Готово ({len(self.points)}/{self._total})")
+        done.setEnabled(len(self.points) >= 2)
+        cancel = menu.addAction("Отмена")
+        action = menu.exec_(pos)
+        if action is undo:
+            self._undo()
+        elif action is clear:
+            self.points.clear()
+            self.update()
+        elif action is done:
+            self.accept()
+        elif action is cancel:
+            self.reject()
+
+    def accept(self):
+        if len(self.points) < 2:
+            self._show_message("Нужно поставить хотя бы 2 точки")
+            return
+        super().accept()
+
+    # ------------------------------------------------------------------
+
+    def paintEvent(self, event):  # noqa: N802 (Qt API)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        painter.fillRect(self.rect(), QColor(12, 13, 16))
+        if self._show_background and self._background_scaled is not None:
+            painter.drawPixmap(0, 0, self._background_scaled)
+            # Лёгкое затемнение: точки и линия должны читаться на любых обоях
+            painter.fillRect(self.rect(), QColor(0, 0, 0, 75))
+        else:
+            # Чистая сетка без панели задач и чужих окон — проще целиться
+            # в края монитора, где обычно наклеена лента.
+            painter.setPen(QPen(QColor(32, 34, 40), 1))
+            step = 100
+            for x in range(0, self.width(), step):
+                painter.drawLine(x, 0, x, self.height())
+            for y in range(0, self.height(), step):
+                painter.drawLine(0, y, self.width(), y)
+
+        painter.setPen(QPen(QColor(47, 168, 79), 2))
+        painter.drawRect(self.rect().adjusted(1, 1, -2, -2))
+
+        if len(self.points) > 1:
+            painter.setPen(QPen(QColor(60, 170, 255, 220), 2))
+            for first, second in zip(self.points, self.points[1:]):
+                x1, y1 = self._to_screen(*first)
+                x2, y2 = self._to_screen(*second)
+                painter.drawLine(int(x1), int(y1), int(x2), int(y2))
+
+        for index, point in enumerate(self.points):
+            cx, cy = self._to_screen(*point)
+            painter.setPen(QPen(QColor(10, 20, 14), 1))
+            painter.setBrush(QColor(60, 220, 120))
+            painter.drawEllipse(QRectF(cx - 6, cy - 6, 12, 12))
+            if index < 9 or (index + 1) % 10 == 0 or index == len(self.points) - 1:
+                painter.setPen(QColor(255, 220, 0))
+                painter.drawText(
+                    QRectF(cx + 8, cy - 18, 60, 18),
+                    Qt.AlignLeft | Qt.AlignVCenter, str(index + 1),
+                )
+
+        self._paint_hud(painter)
+        painter.end()
+
+    def _paint_hud(self, painter):
+        font = painter.font()
+        font.setPointSize(11)
+        painter.setFont(font)
+        metrics = painter.fontMetrics()
+        hint = ("Клик — поставить диод · ПКМ — меню · Backspace — убрать · "
+                "B — фон · Enter — готово · Esc — отмена")
+        width = metrics.horizontalAdvance(hint) + 30
+        height = 36
+        x = (self.width() - width) // 2
+        y = 14
+        painter.setPen(QPen(QColor(70, 72, 80), 1))
+        painter.setBrush(QColor(20, 22, 26, 225))
+        painter.drawRoundedRect(QRectF(x, y, width, height), 8, 8)
+        painter.setPen(QColor("#e4e4e7"))
+        painter.drawText(QRectF(x, y, width, height), Qt.AlignCenter, hint)
+
+        status = self._message or f"Точек: {len(self.points)} / {self._total}"
+        color = "#ffd75e" if self._message else "#8a8b93"
+        sw = metrics.horizontalAdvance(status) + 24
+        painter.setPen(QColor(color))
+        painter.setBrush(QColor(20, 22, 26, 200))
+        painter.drawRoundedRect(
+            QRectF(14, self.height() - 46, sw, 32), 7, 7
+        )
+        painter.drawText(
+            QRectF(14, self.height() - 46, sw, 32), Qt.AlignCenter, status
+        )
+
+
 class MainWindow(QMainWindow):
     update_checked = pyqtSignal(object)
 
@@ -2140,6 +2398,15 @@ class MainWindow(QMainWindow):
 
         draw_controls_row = QHBoxLayout()
 
+        fullscreen_btn = QPushButton("Расставить на весь экран")
+        fullscreen_btn.setObjectName("primaryAction")
+        fullscreen_btn.setToolTip(
+            "Открыть весь монитор без панели задач и кликать прямо по местам,\n"
+            "где наклеены светодиоды. ПКМ — меню, Enter — готово, Esc — отмена."
+        )
+        fullscreen_btn.clicked.connect(self._on_fullscreen_manual_points)
+        draw_controls_row.addWidget(fullscreen_btn)
+
         screenshot_btn = QPushButton("Снимок экрана (фон)")
         screenshot_btn.clicked.connect(self._on_capture_screen_background)
         draw_controls_row.addWidget(screenshot_btn)
@@ -2658,6 +2925,81 @@ class MainWindow(QMainWindow):
         self._update_manual_progress_label()
         self._draw_strip_canvas()
         self.status_label.setText("Путь развёрнут — нажми «Построить маппинг»")
+
+    def _grab_screen_without_taskbar(self, screen):
+        """Снимок экрана без панели задач.
+
+        Иначе на полноэкранном фоне остаётся полоса с кнопкой «Пуск» и иконками,
+        и кажется, что редактор не развернулся на весь монитор.
+        """
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            taskbar = user32.FindWindowW("Shell_TrayWnd", None)
+            hidden = False
+            if taskbar:
+                user32.ShowWindow(taskbar, 0)  # SW_HIDE
+                hidden = True
+                QApplication.processEvents()
+                time.sleep(0.12)  # дать рабочему столу перерисоваться
+            try:
+                return screen.grabWindow(0)
+            finally:
+                if hidden:
+                    user32.ShowWindow(taskbar, 5)  # SW_SHOW
+        except Exception:
+            log.debug("Не удалось сделать снимок без панели задач", exc_info=True)
+            try:
+                return screen.grabWindow(0)
+            except Exception:
+                return None
+
+    def _on_fullscreen_manual_points(self):
+        """Открывает расстановку диодов на весь монитор, без панели задач."""
+        screen = QApplication.primaryScreen()
+        if screen is None:
+            QMessageBox.warning(self, "Расстановка", "Не удалось получить экран")
+            return
+
+        was_visible = self.isVisible()
+        self.hide()
+        QApplication.processEvents()
+        background = self._grab_screen_without_taskbar(screen)
+
+        editor = FullscreenPointEditor(
+            self,
+            self.strip_canvas_width,
+            self.strip_canvas_height,
+            self._total_leds(),
+            background=background,
+            points=self.strip_manual_points,
+        )
+        try:
+            editor.setGeometry(screen.geometry())
+            editor.showFullScreen()
+            accepted = editor.exec_() == QDialog.Accepted
+        finally:
+            if was_visible:
+                self.show()
+                self.raise_()
+                self.activateWindow()
+
+        if not accepted:
+            return
+
+        self.strip_manual_points = list(editor.points)
+        index = self.strip_draw_mode_combo.findData("manual")
+        if index >= 0:
+            self.strip_draw_mode_combo.blockSignals(True)
+            self.strip_draw_mode_combo.setCurrentIndex(index)
+            self.strip_draw_mode_combo.blockSignals(False)
+        self.strip_draw_mode = "manual"
+        self._update_manual_progress_label()
+        self._draw_strip_canvas()
+        total = self._total_leds()
+        self.status_label.setText(
+            f"На весь экран расставлено {len(self.strip_manual_points)} из {total} диодов"
+        )
 
     def _on_capture_screen_background(self):
         """Делает снимок экрана и использует его как фон холста для точного рисования"""

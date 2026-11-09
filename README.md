@@ -16,6 +16,21 @@
 
 Работает только на **Windows** (dxcam и определение активного окна — Windows-only API).
 
+## English
+
+Desktop ambient backlight for Windows 10/11. It captures the screen and streams
+per-LED colors to addressable LED strips:
+
+- **WLED** (ESP32/ESP8266) over Wi-Fi (UDP DRGB) or USB (Adalight)
+- **ELK-BLEDOM** over Bluetooth LE
+- Full-screen LED layout editor: click every LED right where it is on the monitor
+- Profiles, HUD mask, colour calibration, audio-reactive modes, phone remote, MQTT
+
+You need an addressable strip (WS2812B/SK6812) and a 5 V power supply. Download
+the portable EXE or ZIP from
+[Releases](https://github.com/arsinema/ledambilight/releases/latest).
+The application UI is currently in Russian.
+
 ## Скачать
 
 Готовый `LEDAmbilight.exe` (Windows 10/11, Python не нужен) лежит в разделе
@@ -112,6 +127,12 @@ OpenCV для сборки и работы не нужен: dxcam отдаёт �
    само зажигает диоды по одному (0, 10, 20, …), а ты щёлкаешь по схеме там,
    где видишь этот свет. Около десяти кликов — и путь построен точно по факту,
    вместе с направлением и началом. Если диод не видно — «Пропустить».
+3. **Вручную по местам диодов** — режим «Вручную — каждый светодиод отдельно»
+   → «Расставить на весь экран». Монитор разворачивается целиком, без панели
+   задач: кликай прямо по местам, где наклеены диоды. ПКМ — меню, `Backspace` —
+   убрать, `Enter` — готово, `B` — показать/скрыть снимок экрана как фон.
+
+![Полноэкранная расстановка светодиодов](docs/fullscreen-editor.png)
 
 После любого способа стоит нажать «Тест-развёртку»: диоды загораются по
 порядку, и видно, совпадает ли физический порядок с нарисованным. Если бежит
@@ -199,6 +220,8 @@ OpenCV для сборки и работы не нужен: dxcam отдаёт �
 **Разметка ленты**
 - Рисование пути ленты мышкой (прямые отрезки, свободное рисование
   несколькими штрихами, ручная расстановка каждого диода)
+- **Полноэкранная расстановка диодов**: весь монитор без панели задач, клик
+  по каждому реальному месту; фон-снимок включается клавишей `B`
 - Кнопка **«Реверс пути»** — разворачивает путь задом наперёд, если лента
   физически наклеена в обратную сторону и тест-развёртка бежит не в ту сторону
 - Тест-развёртка (диоды зажигаются по одному) для проверки физического порядка

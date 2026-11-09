@@ -3,6 +3,20 @@
 Формат — [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/),
 версии — [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [1.1.0] — 2026-11-09
+
+### Добавлено
+
+- **Полноэкранная расстановка светодиодов.** В ручном режиме кнопка
+  «Расставить на весь экран» открывает монитор целиком, без панели задач:
+  клик — диод, ПКМ — меню, `Backspace` — убрать, `Enter` — готово,
+  `Esc` — отмена. Точки сразу попадают в существующий ручной маппинг.
+- **Фон-снимок экрана по клавише `B`.** Снимок делается без панели задач,
+  чтобы внизу не оставалось полосы; по умолчанию — чистая сетка.
+- **Английское описание проекта** в GitHub About и краткий English-раздел
+  в README — для тех, кто находит репозиторий не из русскоязычной среды.
+- Скриншот полноэкранного редактора в `docs/fullscreen-editor.png`.
+
 ## [1.0.3] — 2026-11-09
 
 ### Исправлено
@@ -74,6 +88,7 @@
   приходили. Теперь кадр берётся в родном BGRA и переводится в RGB средствами
   numpy (`capture.bgra_to_rgb`).
 
+[1.1.0]: https://github.com/arsinema/ledambilight/releases/tag/v1.1.0
 [1.0.3]: https://github.com/arsinema/ledambilight/releases/tag/v1.0.3
 [1.0.2]: https://github.com/arsinema/ledambilight/releases/tag/v1.0.2
 [1.0.1]: https://github.com/arsinema/ledambilight/releases/tag/v1.0.1
