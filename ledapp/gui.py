@@ -2,6 +2,7 @@
 Главное окно приложения.
 """
 
+import copy
 import json
 import logging
 import os
@@ -33,6 +34,8 @@ from .audio_engine import list_input_devices, list_output_devices, is_available 
 from .updates import check_for_update
 from .support_bundle import build_report, default_report_name
 from .presets import apply_preset, export_preset, mapping_payload, validate_preset
+from .game_mode import get_foreground_game, normalize_profile, process_alive
+from .game_setup_panel import GameSetupPanel
 from . import autostart, i18n, updater, __version__
 
 log = logging.getLogger(__name__)
@@ -904,6 +907,15 @@ class MainWindow(QMainWindow):
         self._auto_pause_timer.timeout.connect(self._check_auto_pause)
         self._auto_pause_timer.start()
 
+        self._game_session = None
+        self._game_snapshot = None
+        self._game_panel = None
+        self._pending_game = None
+        self._game_timer = QTimer(self)
+        self._game_timer.setInterval(1000)
+        self._game_timer.timeout.connect(self._check_game_session)
+        self._game_timer.start()
+
         self.hotkey_filter = None
         self._setup_hotkeys()
 
@@ -985,6 +997,198 @@ class MainWindow(QMainWindow):
             slider.setValue(int(round(value * 100)))
             slider.blockSignals(False)
         self.status_label.setText(f"Яркость: {int(round(value * 100))}%")
+
+    def _check_game_session(self):
+        """Автоматически определяет игру и ведёт игровую сессию."""
+        try:
+            self._game_session_tick()
+        except Exception:
+            log.debug("Ошибка определения игры", exc_info=True)
+
+    def _game_session_tick(self):
+        cfg = self.config.get("game_mode", {})
+        if not cfg.get("enabled", True):
+            if self._game_session is not None:
+                self._end_game_session()
+            return
+
+        candidate = get_foreground_game(self.config)
+        session = self._game_session
+        if session is not None:
+            if candidate is not None and candidate.process.lower() == session.get("process"):
+                # Тот же exe пересоздал окно/процесс — не переключаем режим.
+                session["pid"] = candidate.pid
+                return
+            if not process_alive(session.get("pid")):
+                self._end_game_session()
+            elif candidate is not None and candidate.pid != session.get("pid"):
+                # Другая игра вышла вперёд: закрываем старую сессию.
+                self._end_game_session()
+            else:
+                return
+
+        if candidate is None:
+            return
+        process = candidate.process.lower()
+        profiles = cfg.get("profiles", {})
+        profile = profiles.get(process)
+        if profile is None:
+            # Незнакомая полноэкранная игра — один раз спрашиваем.
+            if self._game_panel is not None:
+                return
+            if self._pending_game and self._pending_game.get("process") == process:
+                return
+            self._show_game_panel(candidate)
+            return
+        profile = normalize_profile(profile)
+        if profile["mode"] == "ignore":
+            self._game_session = {
+                "pid": candidate.pid,
+                "process": process,
+                "mode": "ignore",
+            }
+            return
+        self._start_game_session(candidate, profile["mode"])
+
+    def _show_game_panel(self, game):
+        self._pending_game = {"pid": game.pid, "process": game.process.lower()}
+        panel = GameSetupPanel(game.process, self)
+        self._game_panel = panel
+        process = game.process.lower()
+
+        def chosen(mode):
+            self._on_game_mode_chosen(process, mode, game)
+
+        panel.selected.connect(chosen)
+        panel.destroyed.connect(lambda _=None: setattr(self, "_game_panel", None))
+        panel.show()
+        log.info("Первая игра: %s — показана панель выбора режима", game.process)
+
+    def _on_game_mode_chosen(self, process, mode, game=None):
+        self._pending_game = None
+        cfg = self.config.setdefault("game_mode", {})
+        profiles = cfg.setdefault("profiles", {})
+        profiles[process] = normalize_profile({"mode": mode})
+        self._queue_save()
+        self._refresh_game_profiles_list()
+        if mode == "ignore":
+            self._game_session = {
+                "pid": game.pid if game is not None else 0,
+                "process": process,
+                "mode": "ignore",
+            }
+            return
+        if game is None:
+            game = self._current_game_window()
+        if game is not None:
+            self._start_game_session(game, mode)
+
+    def _pending_pid_for(self, process):
+        if self._pending_game and self._pending_game.get("process") == process:
+            return self._pending_game.get("pid")
+        game = self._current_game_window()
+        return game.pid if game else 0
+
+    def _current_game_window(self):
+        try:
+            return get_foreground_game(self.config)
+        except Exception:
+            return None
+
+    def _start_game_session(self, game, mode):
+        if self._game_session is not None:
+            return
+        self._game_snapshot = {
+            "scene": self._last_scene_name,
+            "last_scene": self.config.get("last_scene", ""),
+            "audio": copy.deepcopy(self.config.get("audio", {})),
+            "brightness": copy.deepcopy(self.config.get("brightness", {})),
+            "filters": copy.deepcopy(self.config.get("filters", {})),
+        }
+        self._game_session = {
+            "pid": game.pid,
+            "process": game.process.lower(),
+            "mode": mode,
+        }
+        # Игровой профиль: яркость/сглаживание игры, затем аудио по режиму.
+        if self._last_scene_name != "Игра":
+            try:
+                self._apply_scene("Игра")
+            except Exception:
+                log.debug("Не удалось применить игровую сцену", exc_info=True)
+        self._apply_game_audio(mode)
+        self.status_label.setText(f"Игра: {game.process} — режим {mode}")
+        log.info("Игровая сессия: %s, режим %s", game.process, mode)
+
+    def _apply_game_audio(self, mode):
+        audio = self.config.setdefault("audio", {})
+        if mode in ("ambilight_audio", "visualizer", "spectrum"):
+            audio["enabled"] = True
+            audio["source"] = "loopback"
+            audio["device_name"] = None
+            audio["mode"] = {
+                "ambilight_audio": "hybrid",
+                "visualizer": "visualizer",
+                "spectrum": "spectrum",
+            }[mode]
+            self.worker.update_config(self.config)
+            self.worker.start_audio()
+        else:
+            audio["enabled"] = False
+            self.worker.update_config(self.config)
+            self.worker.stop_audio()
+        self._sync_audio_ui()
+
+    def _end_game_session(self):
+        if self._game_session is None:
+            return
+        snapshot = self._game_snapshot
+        self._game_session = None
+        self._game_snapshot = None
+        if snapshot:
+            for key in ("audio", "brightness", "filters"):
+                if key in snapshot:
+                    self.config[key] = snapshot[key]
+            scene = snapshot.get("scene")
+            self._last_scene_name = scene if scene in SCENE_PRESETS else ""
+            if "last_scene" in snapshot:
+                self.config["last_scene"] = snapshot["last_scene"]
+            self.worker.update_config(self.config)
+            audio = self.config.get("audio", {})
+            if audio.get("enabled", False):
+                self.worker.start_audio()
+            else:
+                self.worker.stop_audio()
+            self._sync_audio_ui()
+            self._queue_save()
+        self.status_label.setText("Игровая сессия завершена — настройки восстановлены")
+        log.info("Игровая сессия завершена, настройки восстановлены")
+
+    def _sync_audio_ui(self):
+        """Обновляет виджеты звука после смены игры/восстановления."""
+        audio = self.config.get("audio", {})
+        combo = getattr(self, "audio_mode_combo", None)
+        if combo is not None:
+            index = combo.findData(audio.get("mode", "hybrid"))
+            if index >= 0:
+                combo.blockSignals(True)
+                combo.setCurrentIndex(index)
+                combo.blockSignals(False)
+        source = getattr(self, "audio_source_combo", None)
+        if source is not None:
+            index = source.findData(audio.get("source", "loopback"))
+            if index >= 0:
+                source.blockSignals(True)
+                source.setCurrentIndex(index)
+                source.blockSignals(False)
+        populate = getattr(self, "_audio_populate_devices", None)
+        if populate is not None:
+            populate(audio.get("source", "loopback"), audio.get("device_name"))
+        gain = getattr(self, "audio_input_gain", None)
+        if gain is not None:
+            gain.blockSignals(True)
+            gain.setValue(float(audio.get("input_gain", 2.0)))
+            gain.blockSignals(False)
 
     def _check_auto_pause(self):
         """Пауза подсветки, когда экран заблокирован или пользователь отошёл."""
@@ -2350,6 +2554,8 @@ class MainWindow(QMainWindow):
             lambda v: self._set_nested("audio", "input_gain", v)
         )
         control_form.addRow("Усиление входа", input_gain)
+        self.audio_input_gain = input_gain
+        self._audio_populate_devices = _populate_devices
         input_note = QLabel(
             "Для гитары через аудиокарту: источник «Микрофон / линейный вход», "
             "режим «Полный визуализатор» или «Спектроанализатор». "
@@ -3902,6 +4108,33 @@ class MainWindow(QMainWindow):
         app_form.addRow(app_row)
         layout.addWidget(app_box)
 
+        game_box = QGroupBox("Игровые режимы")
+        game_layout = QVBoxLayout(game_box)
+        game_enabled = QCheckBox("Автоматически определять игры и включать их режим")
+        game_enabled.setChecked(self.config.get("game_mode", {}).get("enabled", True))
+        game_enabled.stateChanged.connect(
+            lambda s: self._set_nested("game_mode", "enabled", s == Qt.Checked)
+        )
+        game_layout.addWidget(game_enabled)
+        game_layout.addWidget(QLabel(
+            "При первом запуске игры появится панель выбора режима. "
+            "Выбор запоминается автоматически; ниже можно его забыть."
+        ))
+        self.game_profiles_list = QListWidget()
+        self.game_profiles_list.setMaximumHeight(110)
+        game_layout.addWidget(self.game_profiles_list)
+        game_buttons = QHBoxLayout()
+        forget_btn = QPushButton("Забыть выбранную игру")
+        forget_btn.clicked.connect(self._on_forget_game_profile)
+        forget_all_btn = QPushButton("Забыть все")
+        forget_all_btn.clicked.connect(self._on_forget_all_game_profiles)
+        game_buttons.addWidget(forget_btn)
+        game_buttons.addWidget(forget_all_btn)
+        game_buttons.addStretch()
+        game_layout.addLayout(game_buttons)
+        layout.addWidget(game_box)
+        self._refresh_game_profiles_list()
+
         fps_row = QHBoxLayout()
         fps_row.addWidget(QLabel("Целевой FPS захвата экрана:"))
         fps_spin = QSpinBox()
@@ -5133,6 +5366,53 @@ class MainWindow(QMainWindow):
         lines.append(f"title:{title} = {scene}")
         self.app_scenes_edit.setPlainText("\n".join(lines))
         self.status_label.setText(f"Сцена «{scene}» привязана к заголовку «{title}»")
+
+    def _refresh_game_profiles_list(self):
+        widget = getattr(self, "game_profiles_list", None)
+        if widget is None:
+            return
+        labels = {
+            "ambilight": "только Ambilight",
+            "ambilight_audio": "Ambilight + звук",
+            "visualizer": "визуализатор",
+            "spectrum": "спектроанализатор",
+            "ignore": "игнорировать",
+        }
+        widget.clear()
+        profiles = self.config.get("game_mode", {}).get("profiles", {})
+        for process, raw in sorted(profiles.items()):
+            mode = normalize_profile(raw).get("mode", "ambilight_audio")
+            item = QListWidgetItem(f"{process}  —  {labels.get(mode, mode)}")
+            item.setData(Qt.UserRole, process)
+            widget.addItem(item)
+        if widget.count() == 0:
+            item = QListWidgetItem("Пока нет сохранённых игр — запусти игру")
+            item.setFlags(Qt.NoItemFlags)
+            widget.addItem(item)
+
+    def _on_forget_game_profile(self):
+        widget = getattr(self, "game_profiles_list", None)
+        if widget is None:
+            return
+        item = widget.currentItem()
+        if item is None:
+            return
+        process = item.data(Qt.UserRole)
+        if not process:
+            return
+        profiles = self.config.get("game_mode", {}).get("profiles", {})
+        profiles.pop(process, None)
+        if self._game_session is not None and self._game_session.get("process") == process:
+            self._end_game_session()
+        self._queue_save()
+        self._refresh_game_profiles_list()
+
+    def _on_forget_all_game_profiles(self):
+        if self._game_session is not None:
+            self._end_game_session()
+        self.config.setdefault("game_mode", {})["profiles"] = {}
+        self._queue_save()
+        self._refresh_game_profiles_list()
 
     def on_process_changed(self, name):
         """Активное окно сменилось — применяем привязанную сцену."""

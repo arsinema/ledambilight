@@ -176,6 +176,13 @@ DEFAULT_CONFIG = {
     # Привязка по заголовку окна: {"YouTube": "Кино", "Twitch": "Игра"}
     "app_title_scenes": {},
 
+    # Автоматические режимы для игр: {"cs2.exe": {"mode": "ambilight_audio"}}
+    "game_mode": {
+        "enabled": True,
+        "profiles": {},
+        "ignore_processes": [],
+    },
+
     # Режим «Лампа»: лента как светильник, когда Ambilight не нужен
     "lamp": {
         "enabled": False,
@@ -400,6 +407,7 @@ _DICT_SECTIONS = (
     "filters", "audio", "process_profile_map",
     "adaptive_fps", "power", "auto_pause", "hotkeys", "content", "remote",
     "lamp", "schedule", "sunrise", "app_scenes", "app_title_scenes", "mqtt", "updates",
+    "game_mode",
 )
 
 _INT_RANGES = {
