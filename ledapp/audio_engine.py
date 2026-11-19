@@ -17,13 +17,29 @@ import numpy as np
 
 log = logging.getLogger(__name__)
 
-try:
-    import soundcard as sc
-except Exception:
-    # Ловим не только ImportError: на системах без корректно настроенного
-    # аудио-бэкенда (нет PulseAudio/WASAPI-контекста и т.п.) soundcard может
-    # падать прямо на импорте — не хотим ронять всё приложение из-за этого.
-    sc = None
+# soundcard инициализирует COM/WASAPI. Импортируем его лениво: иначе порядок
+# импорта модулей (audio до capture) ломает dxcam/comtypes в том же потоке.
+_sc = None
+_sc_loaded = False
+_sc_lock = threading.Lock()
+
+
+def _soundcard():
+    global _sc, _sc_loaded
+    if _sc_loaded:
+        return _sc
+    with _sc_lock:
+        if _sc_loaded:
+            return _sc
+        try:
+            import soundcard as module
+            _sc = module
+        except Exception as exc:
+            # На системах без WASAPI/аудио-бэкенда не роняем приложение.
+            log.warning("soundcard недоступен: %s", exc)
+            _sc = None
+        _sc_loaded = True
+    return _sc
 
 SAMPLE_RATE = 48000  # большинство USB-аудиокарт работают в 48 кГц
 CHUNK_SIZE = 1024  # ~23мс на чанк при 44100Hz — хороший баланс отклика/нагрузки
@@ -62,27 +78,29 @@ class AudioState:
 
 
 def is_available():
-    return sc is not None
+    return _soundcard() is not None
 
 
 def list_output_devices():
     """Названия устройств вывода звука, доступных для loopback-захвата."""
-    if sc is None:
+    module = _soundcard()
+    if module is None:
         return []
     try:
-        return [spk.name for spk in sc.all_speakers()]
+        return [spk.name for spk in module.all_speakers()]
     except Exception:
         return []
 
 
 def list_input_devices():
     """Микрофоны, линейные/инструментальные входы и аудиоинтерфейсы."""
-    if sc is None:
+    module = _soundcard()
+    if module is None:
         return []
     try:
         return [
             mic.name
-            for mic in sc.all_microphones(include_loopback=False)
+            for mic in module.all_microphones(include_loopback=False)
             if "стерео микшер" not in mic.name.lower()
             and "stereo mix" not in mic.name.lower()
         ]
@@ -174,7 +192,7 @@ class AudioCapture:
             self.input_gain = 2.0
 
     def start(self):
-        if sc is None:
+        if _soundcard() is None:
             raise RuntimeError(
                 "Библиотека 'soundcard' недоступна. Установите: pip install soundcard"
             )
@@ -212,15 +230,18 @@ class AudioCapture:
             log.debug("Не удалось инициализировать COM в потоке звука", exc_info=True)
 
         try:
+            module = _soundcard()
+            if module is None:
+                raise RuntimeError("Библиотека soundcard недоступна")
             if self.source == "input":
                 mic = None
                 if self.device_name:
-                    for candidate in sc.all_microphones(include_loopback=False):
+                    for candidate in module.all_microphones(include_loopback=False):
                         if candidate.name == self.device_name:
                             mic = candidate
                             break
                 if mic is None:
-                    mic = sc.default_microphone()
+                    mic = module.default_microphone()
                 if mic is None:
                     raise RuntimeError(
                         "Не найден микрофон/линейный вход. Проверь, что аудиокарта "
@@ -230,15 +251,15 @@ class AudioCapture:
             else:
                 speaker = None
                 if self.device_name:
-                    for spk in sc.all_speakers():
+                    for spk in module.all_speakers():
                         if spk.name == self.device_name:
                             speaker = spk
                             break
                 if speaker is None:
-                    speaker = sc.default_speaker()
+                    speaker = module.default_speaker()
                 if speaker is None:
                     raise RuntimeError("Не найдено устройство вывода звука")
-                mic = sc.get_microphone(id=str(speaker.name), include_loopback=True)
+                mic = module.get_microphone(id=str(speaker.name), include_loopback=True)
                 log.info("Аудио-реакция: loopback %s", speaker.name)
 
             recorder = None

@@ -117,6 +117,9 @@ def _arg_value(flag):
 
 
 def main():
+    if "-h" in sys.argv[1:] or "--help" in sys.argv[1:]:
+        print(__doc__)
+        return 0
     portable = "--portable" in sys.argv
     onefile = not portable and "--dir" not in sys.argv
     out_dir = _arg_value("--out") or APP_DIR

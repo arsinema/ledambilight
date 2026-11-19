@@ -237,6 +237,9 @@ class RemoteServer:
             return False
         httpd.daemon_threads = True
         httpd.app = self  # type: ignore[attr-defined]
+        # Порт 0 означает «любой свободный»; сохраняем фактический, иначе
+        # url() и диагностика показывают несуществующий порт.
+        self.port = int(httpd.server_address[1])
         self._httpd = httpd
         self._thread = threading.Thread(target=httpd.serve_forever, daemon=True)
         self._thread.start()

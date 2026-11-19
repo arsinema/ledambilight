@@ -4,7 +4,7 @@
 включая per-user установку в %LOCALAPPDATA%\\Programs\\InnoSetup6.
 
     python build_installer.py
-    python build_installer.py --source H:\ledapp_final\release_160\dist\LEDAmbilight
+    python build_installer.py --source H:\\ledapp_final\\release_160\\dist\\LEDAmbilight
 
 Перед сборкой должен быть готов onedir-дистрибутив:
 

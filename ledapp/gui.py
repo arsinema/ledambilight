@@ -1083,12 +1083,6 @@ class MainWindow(QMainWindow):
         if game is not None:
             self._start_game_session(game, mode)
 
-    def _pending_pid_for(self, process):
-        if self._pending_game and self._pending_game.get("process") == process:
-            return self._pending_game.get("pid")
-        game = self._current_game_window()
-        return game.pid if game else 0
-
     def _current_game_window(self):
         try:
             return get_foreground_game(self.config)
