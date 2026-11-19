@@ -3,7 +3,7 @@
 ; Requires the onedir build in ..\dist\LEDAmbilight (python build_exe.py --portable).
 
 #define MyAppName "LED Ambilight"
-#define MyAppVersion "1.6.0"
+#define MyAppVersion "1.8.0"
 #define MyAppPublisher "arsinema"
 #define MyAppURL "https://github.com/arsinema/ledambilight"
 #define MyAppExeName "LEDAmbilight.exe"

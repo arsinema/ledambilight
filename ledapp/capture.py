@@ -206,7 +206,22 @@ class ScreenCapture:
 # psutil.Process(pid).name() относительно дорогой (открывает хэндл процесса в ОС).
 # Без кэша это дёргалось на КАЖДОМ кадре (10+ раз в секунду), хотя активное
 # окно обычно не меняется помногу секунд/минут подряд.
-_process_cache = {"hwnd": None, "name": None}
+_process_cache = {"hwnd": None, "name": None, "title": ""}
+
+
+def get_active_window_title():
+    """Заголовок активного окна (для правил «YouTube = Кино»)."""
+    if not HAS_WIN_APIS:
+        return ""
+    try:
+        hwnd = win32gui.GetForegroundWindow()
+        if not hwnd:
+            return ""
+        title = win32gui.GetWindowText(hwnd) or ""
+        _process_cache["title"] = title
+        return title
+    except Exception:
+        return ""
 
 
 def get_active_process_name():
@@ -225,6 +240,7 @@ def get_active_process_name():
         name = process.name()
         _process_cache["hwnd"] = hwnd
         _process_cache["name"] = name
+        _process_cache["title"] = win32gui.GetWindowText(hwnd) or ""
         return name
     except Exception:
         return None

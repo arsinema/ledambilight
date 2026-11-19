@@ -1,8 +1,8 @@
-﻿import copy
+import copy
 import unittest
 
 from ledapp.config import DEFAULT_CONFIG
-from ledapp.gui import SCENE_PRESETS, detect_scene, scene_matches_config
+from ledapp.gui import SCENE_PRESETS, detect_scene, match_title_scene, scene_matches_config
 
 
 def config_for(name):
@@ -34,6 +34,13 @@ class ScenePersistTests(unittest.TestCase):
         cfg = config_for("Игра")
         cfg["filters"]["smoothing_min"] = 0.2501
         self.assertTrue(scene_matches_config(cfg, "Игра"))
+
+    def test_title_rules_choose_longest_match(self):
+        rules = {"YouTube": "Кино", "YouTube Music": "Игра"}
+        self.assertEqual(match_title_scene("YouTube Music — playlist", rules), "Игра")
+        self.assertEqual(match_title_scene("YouTube — video", rules), "Кино")
+        self.assertEqual(match_title_scene("Notepad", rules), "")
+        self.assertEqual(match_title_scene("", rules), "")
 
 
 if __name__ == "__main__":

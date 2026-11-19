@@ -28,6 +28,7 @@ from .capture import (
     ScreenCapture,
     detect_profile,
     get_active_process_name,
+    get_active_window_title,
     hud_rect,
     get_center_area,
     get_quadrant_color,
@@ -47,6 +48,7 @@ from .color_engine import (
 from .frame_analysis import FrameAnalyzer
 from .audio_engine import AudioCapture
 from .wled_controller import WLEDController, MAX_DRGB_LEDS
+from .adaptive_color import AdaptiveSampler
 from .wled_serial_controller import WLEDSerialController
 from .strip_mapper import StripMapper
 from .now_playing import NowPlayingMonitor
@@ -94,6 +96,7 @@ class LedWorker(QThread):
     mapping_boxes = pyqtSignal(object)          # области выборки диодов для превью
     diagnostics_ready = pyqtSignal(str)         # текстовый отчёт диагностики
     process_changed = pyqtSignal(str)           # имя активного процесса (для сцен приложений)
+    window_title_changed = pyqtSignal(str)      # заголовок активного окна (для умных сцен)
     beat_update = pyqtSignal(float)             # текущий темп, BPM
 
     def __init__(self, config):
@@ -124,6 +127,7 @@ class LedWorker(QThread):
         self._capture = None
         self._last_profile = None
         self._last_process_name = None
+        self._last_window_title = None
         self._last_preview_time = 0.0
         self._strip_mode = config.get("strip_mode", "ble")  # "ble" | "wled" | "wled_serial"
         self._last_mapper_strip_width = int(config.get("sample_width", 10))
@@ -149,6 +153,8 @@ class LedWorker(QThread):
         self._standby_phase = 0.0
         self._last_now_playing_text = ""
         self._smoothed_pixels = None
+        self._adaptive_sampler = None
+        self._adaptive_key = None
 
         # -- Живое мини-превью ленты в GUI --
         self._last_strip_preview_emit = 0.0
@@ -470,6 +476,8 @@ class LedWorker(QThread):
                 self._suspended = False
                 self.color_engine.reset()
                 self._smoothed_pixels = None
+                self._adaptive_sampler = None
+                self._adaptive_key = None
                 self._last_profile = None
                 self._fade = 1.0
                 self._analyzer.reset()
@@ -837,6 +845,8 @@ class LedWorker(QThread):
         )
         self._last_mapper_strip_width = new_width
         self._smoothed_pixels = None
+        self._adaptive_sampler = None
+        self._adaptive_key = None
         self._emit_mapping_boxes()
         log.info("Размер области выборки: %s px", new_width)
 
@@ -862,6 +872,8 @@ class LedWorker(QThread):
             )
             self._capture.start()
             self._smoothed_pixels = None
+            self._adaptive_sampler = None
+            self._adaptive_key = None
             log.info("Захват перезапущен с %s FPS", new_fps)
         except Exception:
             log.exception("Не удалось применить новый целевой FPS")
@@ -1049,6 +1061,8 @@ class LedWorker(QThread):
             width, height = 1920, 1080
         self.strip_mapper = StripMapper(1, max(1, width), max(1, height))
         self._smoothed_pixels = None
+        self._adaptive_sampler = None
+        self._adaptive_key = None
         self._emit_mapping_boxes()
         self.status_changed.emit("Маппинг сброшен после смены монитора — построй заново")
 
@@ -1105,6 +1119,8 @@ class LedWorker(QThread):
         self._last_mapper_exact_positions = exact_positions
         if self.strip_mapper.build_mapping(strip_width=strip_width, exact_positions=exact_positions):
             self._smoothed_pixels = None
+            self._adaptive_sampler = None
+            self._adaptive_key = None
             self._led_start_offset = offset
             total_leds = led_count + offset
             self.wled.set_led_count(total_leds)
@@ -1186,6 +1202,8 @@ class LedWorker(QThread):
             self.wled.set_led_count(total_leds)
             self.wled_serial.set_led_count(total_leds)
             self._smoothed_pixels = None
+            self._adaptive_sampler = None
+            self._adaptive_key = None
 
             self.status_changed.emit(
                 f"Маппинг загружен из {path} ({self.strip_mapper.led_count} активных диодов, "
@@ -1228,6 +1246,8 @@ class LedWorker(QThread):
             exact_positions=self.strip_mapper.last_exact_positions,
         )
         self._smoothed_pixels = None
+        self._adaptive_sampler = None
+        self._adaptive_key = None
         log.info("Маппинг подогнан под реальное разрешение захвата %sx%s", real_w, real_h)
         self._emit_mapping_boxes()
         self.mapping_loaded.emit({
@@ -1570,6 +1590,11 @@ class LedWorker(QThread):
             self._last_process_name = process_name
             self.process_changed.emit(process_name or "")
 
+        window_title = get_active_window_title()
+        if window_title != self._last_window_title:
+            self._last_window_title = window_title
+            self.window_title_changed.emit(window_title or "")
+
         # --- профиль: активный процесс + авто-определение кино по полосам ---
         profile_name = detect_profile(self.config)
         if (content.get("auto_cinema", True) and info.is_cinema
@@ -1728,6 +1753,16 @@ class LedWorker(QThread):
             return list(pixels)
         return [(0, 0, 0)] * offset + list(pixels)
 
+    def _adaptive_for_frame(self, frame_w, frame_h):
+        if not self.strip_mapper.led_boxes:
+            return None
+        boxes = self.strip_mapper.led_boxes
+        key = (frame_w, frame_h, len(boxes), boxes[0], boxes[-1])
+        if self._adaptive_sampler is None or self._adaptive_key != key:
+            self._adaptive_sampler = AdaptiveSampler(boxes, frame_w, frame_h)
+            self._adaptive_key = key
+        return self._adaptive_sampler
+
     async def _send_pixel_frame(self, frame, clip, fallback_color,
                                 audio_active, audio_cfg, audio_mode, state):
         """Считает и отправляет цвет каждого диода отдельно (если есть маппинг).
@@ -1742,9 +1777,22 @@ class LedWorker(QThread):
 
         sampling_mode = self.config.get("led_sampling_mode", "average")
         linear = self.config.get("filters", {}).get("linear_average", True)
-        pixels = self.strip_mapper.get_all_leds_colors(
-            frame, mode=sampling_mode, clip_rect=clip, linear=linear
-        )
+        algorithm = self.config.get("filters", {}).get("color_algorithm", "adaptive")
+        if algorithm == "adaptive":
+            try:
+                sampler = self._adaptive_for_frame(frame.shape[1], frame.shape[0])
+                if sampler is None:
+                    raise RuntimeError("нет областей выборки")
+                pixels = sampler.sample(frame, clip_rect=clip)
+            except Exception:
+                log.exception("Адаптивный сэмплер не сработал, откат на классический")
+                pixels = self.strip_mapper.get_all_leds_colors(
+                    frame, mode=sampling_mode, clip_rect=clip, linear=linear
+                )
+        else:
+            pixels = self.strip_mapper.get_all_leds_colors(
+                frame, mode=sampling_mode, clip_rect=clip, linear=linear
+            )
         pixels = self._smooth_pixel_array(pixels)
         # Тот же цветовой пайплайн, что и для одиночного цвета (HSV, яркость,
         # калибровка, гамма) - раньше здесь уходил «сырой» цвет экрана.

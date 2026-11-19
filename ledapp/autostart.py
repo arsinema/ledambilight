@@ -59,10 +59,11 @@ def is_enabled():
 def enable():
     if winreg is None:
         raise RuntimeError("Автозапуск поддерживается только на Windows.")
-    main_py = _main_py_path()
-    if not os.path.exists(main_py):
-        # Иначе в реестр попадёт путь в никуда и автозапуск будет «молча не работать»
-        raise RuntimeError(f"Не найден файл запуска: {main_py}")
+    if not getattr(sys, "frozen", False):
+        main_py = _main_py_path()
+        if not os.path.exists(main_py):
+            # Иначе в реестр попадёт путь в никуда и автозапуск будет «молча не работать»
+            raise RuntimeError(f"Не найден файл запуска: {main_py}")
     command = _build_command()
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY_PATH, 0, winreg.KEY_SET_VALUE) as key:
         winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, command)

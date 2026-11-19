@@ -27,9 +27,9 @@ from PyQt5.QtWidgets import (
     QTimeEdit, QShortcut, QProgressDialog
 )
 
-from .config import load_config, save_config
+from .config import APP_DIR, load_config, save_config
 from .worker import LedWorker
-from .audio_engine import list_output_devices, is_available as audio_is_available
+from .audio_engine import list_input_devices, list_output_devices, is_available as audio_is_available
 from .updates import check_for_update
 from .support_bundle import build_report, default_report_name
 from .presets import apply_preset, export_preset, mapping_payload, validate_preset
@@ -91,6 +91,21 @@ def detect_scene(config):
         if scene_matches_config(config, name):
             return name
     return ""
+
+
+def match_title_scene(title, rules):
+    """Самое длинное совпадение подстроки заголовка -> сцена."""
+    title_lower = (title or "").lower()
+    if not title_lower or not rules:
+        return ""
+    matches = [
+        (len(str(pattern)), scene)
+        for pattern, scene in (rules or {}).items()
+        if pattern and str(pattern).lower() in title_lower and scene in SCENE_PRESETS
+    ]
+    if not matches:
+        return ""
+    return max(matches, key=lambda item: item[0])[1]
 
 
 def _slider_row(form, label_text, minv, maxv, initial, on_change, suffix=""):
@@ -851,8 +866,10 @@ class MainWindow(QMainWindow):
         self.worker.mapping_boxes.connect(self.on_mapping_boxes)
         self.worker.diagnostics_ready.connect(self.on_diagnostics)
         self.worker.process_changed.connect(self.on_process_changed)
+        self.worker.window_title_changed.connect(self.on_window_title_changed)
         self.worker.beat_update.connect(self.on_beat_update)
         self.worker.start()
+        QTimer.singleShot(800, self._load_startup_mapping)
 
         self._update_check_running = False
         self.update_checked.connect(self._on_update_checked)
@@ -895,6 +912,7 @@ class MainWindow(QMainWindow):
         self._remote_state = {}
         self._connected_flag = False
         self._last_scene_name = ""
+        self._current_window_title = ""
         self._mqtt = None
         self._start_remote()
         self._start_mqtt()
@@ -1178,6 +1196,7 @@ class MainWindow(QMainWindow):
 
         tabs.addTab(self._wrap_scroll(self._build_connection_tab()), "Подключение")
         preview_tab_index = tabs.addTab(self._wrap_scroll(self._build_preview_tab()), "Просмотр захвата")
+        tabs.addTab(self._build_room_tab(), "Комната")
         tabs.addTab(self._wrap_scroll(self._build_calibration_tab()), "Калибровка")
         tabs.addTab(self._wrap_scroll(self._build_hud_tab()), "Зоны / HUD")
         tabs.addTab(self._wrap_scroll(self._build_filters_tab()), "Фильтры")
@@ -1187,6 +1206,7 @@ class MainWindow(QMainWindow):
         tabs.addTab(self._wrap_scroll(self._build_wifi_setup_tab()), "Настройка WiFi (ESP)")
         tabs.addTab(self._wrap_scroll(self._build_profiles_tab()), "Профили")
         tabs.addTab(self._wrap_scroll(self._build_system_tab()), "Система")
+        QTimer.singleShot(0, self._refresh_room_strip)
 
         tabs.currentChanged.connect(
             lambda idx: self.worker.set_preview_active(idx == preview_tab_index)
@@ -1818,6 +1838,43 @@ class MainWindow(QMainWindow):
 
     # -- Вкладка превью захвата --
 
+    def _build_room_tab(self):
+        from .room_view import RoomView
+
+        w = QWidget()
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.room_view = RoomView()
+        try:
+            room_total = int(self.config.get("wled_led_count", 90))
+            room_offset = int(self.config.get("led_start_offset", 0))
+        except (TypeError, ValueError):
+            room_total, room_offset = 90, 0
+        self.room_view.set_leds([], room_offset, room_total)
+        layout.addWidget(self.room_view, 1)
+        controls = QHBoxLayout()
+        reset_btn = QPushButton("Сбросить вид")
+        reset_btn.clicked.connect(self.room_view.reset_view)
+        auto_cb = QCheckBox("Автоповорот")
+        auto_cb.toggled.connect(self.room_view.set_auto_rotate)
+        linear_cb = QCheckBox("Развёртка")
+        linear_cb.setChecked(False)
+        self.room_view.set_linear_mode(False)
+        linear_cb.toggled.connect(self.room_view.set_linear_mode)
+        controls.addWidget(reset_btn)
+        controls.addWidget(auto_cb)
+        controls.addWidget(linear_cb)
+        controls.addStretch()
+        layout.addLayout(controls)
+        hint = QLabel(
+            "Объёмный предпросмотр: монитор и лента в комнате. "
+            "Потяни мышью, чтобы повернуть, колесо — приблизить."
+        )
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: #8a8b93; padding: 8px 12px;")
+        layout.addWidget(hint)
+        return w
+
     def _build_preview_tab(self):
         w = QWidget()
         layout = QVBoxLayout(w)
@@ -2147,6 +2204,21 @@ class MainWindow(QMainWindow):
             lambda s: self._set_nested("filters", "linear_average", s == Qt.Checked)
         )
         spatial_form.addRow(linear_cb)
+        algo_combo = QComboBox()
+        algo_combo.addItem("Адаптивный: Gaussian + OKLab + края (рекомендуется)", "adaptive")
+        algo_combo.addItem("Классический: среднее / доминанта", "legacy")
+        saved_algo = filters.get("color_algorithm", "adaptive")
+        ai = algo_combo.findData(saved_algo)
+        algo_combo.setCurrentIndex(max(0, ai))
+        algo_combo.currentIndexChanged.connect(
+            lambda i: self._set_nested("filters", "color_algorithm", algo_combo.itemData(i))
+        )
+        spatial_form.addRow("Алгоритм цвета", algo_combo)
+        spatial_form.addRow(QLabel(
+            "Адаптивный: взвешивает пиксели по центру зоны, сохраняет отдельные\n"
+            "оттенки на резких границах и мелкие яркие объекты. Классический —\n"
+            "старое поведение; переключатель оставлен для сравнения."
+        ))
         _slider_row(
             spatial_form, "Гамма (для HDR и блёклых сцен)", 70, 160,
             int(filters.get("gamma", 1.0) * 100),
@@ -2210,19 +2282,82 @@ class MainWindow(QMainWindow):
         self.audio_mode_hint.setStyleSheet("color: #9a9ba3;")
         control_form.addRow(self.audio_mode_hint)
 
+        source_combo = QComboBox()
+        source_combo.addItem("Системный звук (loopback) — колонки/наушники", "loopback")
+        source_combo.addItem("Микрофон / линейный вход — гитара, аудиокарта", "input")
+        saved_source = audio.get("source", "loopback")
+        si = source_combo.findData(saved_source)
+        source_combo.setCurrentIndex(max(0, si))
+        self.audio_source_combo = source_combo
+        control_form.addRow("Источник", source_combo)
+
         device_combo = QComboBox()
-        device_combo.addItem("Устройство вывода по умолчанию", None)
-        for name in list_output_devices():
-            device_combo.addItem(name, name)
-        saved_device = audio.get("device_name")
-        if saved_device:
-            di = device_combo.findData(saved_device)
-            if di >= 0:
-                device_combo.setCurrentIndex(di)
+        self.audio_device_combo = device_combo
+
+        def _populate_devices(source, selected=None):
+            device_combo.blockSignals(True)
+            device_combo.clear()
+            if source == "input":
+                device_combo.addItem("Вход по умолчанию (микрофон/линейный вход)", None)
+                names = list_input_devices()
+            else:
+                device_combo.addItem("Устройство вывода по умолчанию", None)
+                names = list_output_devices()
+            for name in names:
+                device_combo.addItem(name, name)
+            if selected:
+                di = device_combo.findData(selected)
+                if di >= 0:
+                    device_combo.setCurrentIndex(di)
+            device_combo.blockSignals(False)
+
+        _populate_devices(saved_source, audio.get("device_name"))
+
+        def _on_source_changed(index):
+            source = source_combo.itemData(index) or "loopback"
+            self.config["audio"]["source"] = source
+            self.config["audio"]["device_name"] = None
+            _populate_devices(source, None)
+            self._queue_save()
+            self._restart_audio_if_enabled()
+
+        source_combo.currentIndexChanged.connect(_on_source_changed)
         device_combo.currentIndexChanged.connect(
-            lambda i: self._set_nested("audio", "device_name", device_combo.itemData(i))
+            lambda i: (
+                self._set_nested("audio", "device_name", device_combo.itemData(i)),
+                self._restart_audio_if_enabled(),
+            )
         )
         control_form.addRow("Устройство", device_combo)
+
+        refresh_audio_devices = QPushButton("Обновить список устройств")
+        refresh_audio_devices.clicked.connect(
+            lambda: _populate_devices(
+                source_combo.currentData() or "loopback",
+                device_combo.currentData(),
+            )
+        )
+        control_form.addRow(refresh_audio_devices)
+
+        input_gain = QDoubleSpinBox()
+        input_gain.setRange(0.5, 8.0)
+        input_gain.setSingleStep(0.5)
+        input_gain.setValue(float(audio.get("input_gain", 2.0)))
+        input_gain.setToolTip(
+            "Усиление для гитары/линейного входа. Если уровня мало — подними."
+        )
+        input_gain.valueChanged.connect(
+            lambda v: self._set_nested("audio", "input_gain", v)
+        )
+        control_form.addRow("Усиление входа", input_gain)
+        input_note = QLabel(
+            "Для гитары через аудиокарту: источник «Микрофон / линейный вход», "
+            "режим «Полный визуализатор» или «Спектроанализатор». "
+            "Если уровня мало — подними «Усиление входа» и «Чувствительность»."
+        )
+        input_note.setWordWrap(True)
+        input_note.setStyleSheet("color: #8fb8ff;")
+        control_form.addRow(input_note)
 
         layout.addWidget(control_box)
 
@@ -2336,6 +2471,12 @@ class MainWindow(QMainWindow):
 
         self._on_audio_mode_changed(audio.get("mode", "hybrid"), save=False)
         return w
+
+    def _restart_audio_if_enabled(self):
+        """Смена входа/выхода применяется только при перезапуске захвата."""
+        if self.config.get("audio", {}).get("enabled", False):
+            self.worker.stop_audio()
+            self.worker.start_audio()
 
     def _on_audio_mode_changed(self, mode, save=True):
         """Переключает режим звука и включает/выключает только те регуляторы,
@@ -2994,6 +3135,29 @@ class MainWindow(QMainWindow):
         
         painter.end()
         self.strip_canvas.setPixmap(pixmap)
+        self._refresh_room_strip()
+
+    def _refresh_room_strip(self):
+        """Передаёт в комнату реальный путь ленты, а не ровный периметр."""
+        room = getattr(self, "room_view", None)
+        if room is None:
+            return
+        try:
+            active = max(1, self._active_leds())
+            if self.strip_draw_mode == "manual" and self.strip_manual_points:
+                points = list(self.strip_manual_points[:active])
+            elif len(self.strip_path_points) > 1:
+                points = self._resample_path_evenly(self.strip_path_points, active)
+            else:
+                points = []
+            width = max(1, int(getattr(self, "strip_canvas_width", 1)))
+            height = max(1, int(getattr(self, "strip_canvas_height", 1)))
+            normalized = [
+                (x / width, y / height) for x, y in points
+            ]
+            room.set_strip_points(normalized)
+        except Exception:
+            log.debug("Не удалось обновить путь ленты для комнаты", exc_info=True)
 
     def _on_strip_canvas_mouse_press(self, event):
         """Добавление точки/светодиода в зависимости от выбранного режима"""
@@ -3555,11 +3719,26 @@ class MainWindow(QMainWindow):
         if filepath:
             self.worker.save_strip_mapping(filepath)
 
+    def _load_startup_mapping(self):
+        """Автозагрузка маппинга из config['mapping_file'] (например, 1.json)."""
+        path = (self.config.get("mapping_file") or "").strip()
+        if not path:
+            return
+        if not os.path.isabs(path):
+            path = os.path.join(APP_DIR, path)
+        if not os.path.exists(path):
+            log.warning("Файл маппинга для автозагрузки не найден: %s", path)
+            return
+        log.info("Автозагрузка маппинга: %s", path)
+        self.worker.load_strip_mapping(path)
+
     def _on_load_strip_config(self):
         """Загружает конфигурацию ленты"""
         from PyQt5.QtWidgets import QFileDialog
         filepath, _ = QFileDialog.getOpenFileName(self, "Загрузить конфигурацию", "", "JSON (*.json)")
         if filepath:
+            self.config["mapping_file"] = filepath
+            self._queue_save()
             self.worker.load_strip_mapping(filepath)
 
     def _on_mapping_loaded(self, data):
@@ -3689,15 +3868,22 @@ class MainWindow(QMainWindow):
         app_box = QGroupBox("Сцены для приложений")
         app_form = QFormLayout(app_box)
         app_form.addRow(QLabel(
-            "Одна строка — одно приложение: «cs2.exe = Игра».\n"
-            "Когда это окно станет активным, приложение включит указанную сцену."
+            "Одна строка — одно правило:\n"
+            "cs2.exe = Игра\n"
+            "title:YouTube = Кино\n"
+            "Для заголовка достаточно части названия окна."
         ))
         self.app_scenes_edit = QPlainTextEdit()
         self.app_scenes_edit.setMaximumHeight(110)
-        self.app_scenes_edit.setPlainText(
-            "\n".join(f"{proc} = {scene}"
-                      for proc, scene in (self.config.get("app_scenes") or {}).items())
-        )
+        lines = [
+            f"{proc} = {scene}"
+            for proc, scene in (self.config.get("app_scenes") or {}).items()
+        ]
+        lines += [
+            f"title:{pattern} = {scene}"
+            for pattern, scene in (self.config.get("app_title_scenes") or {}).items()
+        ]
+        self.app_scenes_edit.setPlainText("\n".join(lines))
         self.app_scenes_edit.textChanged.connect(self._on_app_scenes_edited)
         app_form.addRow(self.app_scenes_edit)
 
@@ -3707,7 +3893,10 @@ class MainWindow(QMainWindow):
             self.app_scene_combo.addItem(scene_name, scene_name)
         bind_btn = QPushButton("Привязать активное окно")
         bind_btn.clicked.connect(self._on_bind_active_window)
+        bind_title_btn = QPushButton("Привязать по заголовку")
+        bind_title_btn.clicked.connect(self._on_bind_active_title)
         app_row.addWidget(bind_btn)
+        app_row.addWidget(bind_title_btn)
         app_row.addWidget(self.app_scene_combo)
         app_row.addStretch()
         app_form.addRow(app_row)
@@ -4890,17 +5079,25 @@ class MainWindow(QMainWindow):
         self._queue_save()
 
     def _on_app_scenes_edited(self):
-        """Разбирает «процесс = сцена» в словарь привязок."""
+        """Разбирает «процесс = сцена» и «title:заголовок = сцена»."""
         mapping = {}
+        title_mapping = {}
         for line in self.app_scenes_edit.toPlainText().splitlines():
             if "=" not in line:
                 continue
-            process, scene = line.split("=", 1)
-            process = process.strip().lower()
+            key, scene = line.split("=", 1)
+            key = key.strip()
             scene = scene.strip()
-            if process and scene in SCENE_PRESETS:
-                mapping[process] = scene
+            if not key or scene not in SCENE_PRESETS:
+                continue
+            if key.lower().startswith("title:"):
+                pattern = key[6:].strip()
+                if pattern:
+                    title_mapping[pattern] = scene
+            else:
+                mapping[key.lower()] = scene
         self.config["app_scenes"] = mapping
+        self.config["app_title_scenes"] = title_mapping
         self._queue_save()
 
     def _on_bind_active_window(self):
@@ -4920,11 +5117,46 @@ class MainWindow(QMainWindow):
         self.app_scenes_edit.setPlainText("\n".join(lines))
         self.status_label.setText(f"Сцена «{scene}» привязана к {process}")
 
+    def _on_bind_active_title(self):
+        """Привязывает сцену к части заголовка текущего окна."""
+        title = (getattr(self, "_current_window_title", "") or "").strip()
+        if not title:
+            self.status_label.setText(
+                "Не вижу заголовок окна — запусти Ambilight и открой нужное окно"
+            )
+            return
+        scene = self.app_scene_combo.currentData()
+        lines = [
+            line for line in self.app_scenes_edit.toPlainText().splitlines()
+            if not line.lower().startswith("title:" + title.lower() + " =")
+        ]
+        lines.append(f"title:{title} = {scene}")
+        self.app_scenes_edit.setPlainText("\n".join(lines))
+        self.status_label.setText(f"Сцена «{scene}» привязана к заголовку «{title}»")
+
     def on_process_changed(self, name):
         """Активное окно сменилось — применяем привязанную сцену."""
         self._current_process = (name or "").lower()
         scene = (self.config.get("app_scenes") or {}).get(self._current_process)
         if scene and scene in SCENE_PRESETS and scene != self._last_scene_name:
+            self._apply_scene(scene)
+
+    def on_window_title_changed(self, title):
+        """Умные сцены по заголовку окна: «YouTube = Кино»."""
+        self._current_window_title = title or ""
+        title_lower = self._current_window_title.lower()
+        if not title_lower:
+            return
+        rules = self.config.get("app_title_scenes") or {}
+        scene = match_title_scene(self._current_window_title, rules)
+        if not scene:
+            process_scene = (self.config.get("app_scenes") or {}).get(
+                (getattr(self, "_current_process", "") or "").lower()
+            )
+            if process_scene in SCENE_PRESETS and process_scene != self._last_scene_name:
+                self._apply_scene(process_scene)
+            return
+        if scene != self._last_scene_name:
             self._apply_scene(scene)
 
     def _queue_save(self):
@@ -4968,6 +5200,9 @@ class MainWindow(QMainWindow):
         if time.time() - self._last_pixels_update_time > 1.0:
             self._mini_preview_mode = "flat"
             self._draw_mini_strip_preview()
+        room = getattr(self, "room_view", None)
+        if room is not None:
+            room.set_flat_color((r, g, b))
 
     def on_strip_pixels_updated(self, pixels):
         """Живое мини-превью реальной ленты - что каждый диод показывает
@@ -4976,6 +5211,9 @@ class MainWindow(QMainWindow):
         self._mini_preview_mode = "pixels"
         self._last_pixels_update_time = time.time()
         self._draw_mini_strip_preview()
+        room = getattr(self, "room_view", None)
+        if room is not None:
+            room.set_leds(pixels, offset=self._led_offset(), total=self._total_leds())
 
     def _draw_mini_strip_preview(self):
         from PyQt5.QtGui import QPixmap, QPainter, QColor

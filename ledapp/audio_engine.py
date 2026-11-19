@@ -25,7 +25,7 @@ except Exception:
     # падать прямо на импорте — не хотим ронять всё приложение из-за этого.
     sc = None
 
-SAMPLE_RATE = 44100
+SAMPLE_RATE = 48000  # большинство USB-аудиокарт работают в 48 кГц
 CHUNK_SIZE = 1024  # ~23мс на чанк при 44100Hz — хороший баланс отклика/нагрузки
 SPECTRUM_BANDS = 32  # столько полос отдаём в режим «спектроанализатор»
 SPECTRUM_LOW_HZ = 40
@@ -75,6 +75,21 @@ def list_output_devices():
         return []
 
 
+def list_input_devices():
+    """Микрофоны, линейные/инструментальные входы и аудиоинтерфейсы."""
+    if sc is None:
+        return []
+    try:
+        return [
+            mic.name
+            for mic in sc.all_microphones(include_loopback=False)
+            if "стерео микшер" not in mic.name.lower()
+            and "stereo mix" not in mic.name.lower()
+        ]
+    except Exception:
+        return []
+
+
 class AudioCapture:
     def __init__(self):
         self._thread = None
@@ -84,8 +99,11 @@ class AudioCapture:
         self._generation = 0
         self._lock = threading.Lock()
         self._state = AudioState()
+        self.last_error = ""
 
-        self.device_name = None  # None = устройство вывода по умолчанию
+        self.device_name = None  # None = устройство по умолчанию
+        self.source = "loopback"  # "loopback" (звук колонок) | "input" (микрофон/гитара)
+        self.input_gain = 2.0
 
         # Параметры анализа — обновляются на лету через update_settings()
         self.sensitivity = 1.0
@@ -149,6 +167,11 @@ class AudioCapture:
         self.envelope_release = audio_cfg.get("envelope_release", 0.15)
         self.peak_threshold = audio_cfg.get("peak_threshold", 1.8)
         self.device_name = audio_cfg.get("device_name") or None
+        self.source = audio_cfg.get("source", "loopback") or "loopback"
+        try:
+            self.input_gain = max(0.5, min(8.0, float(audio_cfg.get("input_gain", 2.0))))
+        except (TypeError, ValueError):
+            self.input_gain = 2.0
 
     def start(self):
         if sc is None:
@@ -189,27 +212,57 @@ class AudioCapture:
             log.debug("Не удалось инициализировать COM в потоке звука", exc_info=True)
 
         try:
-            speaker = None
-            if self.device_name:
-                for spk in sc.all_speakers():
-                    if spk.name == self.device_name:
-                        speaker = spk
-                        break
-            if speaker is None:
-                speaker = sc.default_speaker()
+            if self.source == "input":
+                mic = None
+                if self.device_name:
+                    for candidate in sc.all_microphones(include_loopback=False):
+                        if candidate.name == self.device_name:
+                            mic = candidate
+                            break
+                if mic is None:
+                    mic = sc.default_microphone()
+                if mic is None:
+                    raise RuntimeError(
+                        "Не найден микрофон/линейный вход. Проверь, что аудиокарта "
+                        "включена в Windows → Звук → Запись."
+                    )
+                log.info("Аудио-реакция: вход %s", mic.name)
+            else:
+                speaker = None
+                if self.device_name:
+                    for spk in sc.all_speakers():
+                        if spk.name == self.device_name:
+                            speaker = spk
+                            break
+                if speaker is None:
+                    speaker = sc.default_speaker()
+                if speaker is None:
+                    raise RuntimeError("Не найдено устройство вывода звука")
+                mic = sc.get_microphone(id=str(speaker.name), include_loopback=True)
+                log.info("Аудио-реакция: loopback %s", speaker.name)
 
-            mic = sc.get_microphone(id=str(speaker.name), include_loopback=True)
+            recorder = None
+            for rate in (SAMPLE_RATE, 44100):
+                try:
+                    recorder = mic.recorder(samplerate=rate)
+                    log.info("Аудио-реакция: частота %s Гц", rate)
+                    break
+                except Exception as exc:
+                    log.warning("Не удалось открыть звук на %s Гц: %s", rate, exc)
+            if recorder is None:
+                raise RuntimeError("Аудиокарта не открылась ни на 48, ни на 44.1 кГц")
 
-            with mic.recorder(samplerate=SAMPLE_RATE) as recorder:
+            with recorder as active:
                 while self._running and generation == self._generation:
-                    data = recorder.record(numframes=CHUNK_SIZE)
+                    data = active.record(numframes=CHUNK_SIZE)
                     self._process_chunk(data)
-        except Exception:
+        except Exception as exc:
             # Раньше поток просто тихо умирал, и «аудио-реакция» переставала
             # работать без единого сообщения
             log.exception("Поток захвата звука остановлен из-за ошибки")
             if generation == self._generation:
                 self._running = False
+                self.last_error = str(exc)
         finally:
             if com_initialized:
                 try:
@@ -225,7 +278,8 @@ class AudioCapture:
         rms = float(np.sqrt(np.mean(mono.astype(np.float64) ** 2)) + 1e-9)
         # эмпирический множитель: чистый RMS системного звука редко доходит
         # до 1.0, поэтому подтягиваем шкалу под более отзывчивый диапазон
-        volume = min(1.0, rms * 4.0 * self.sensitivity)
+        input_gain = self.input_gain if self.source == "input" else 1.0
+        volume = min(1.0, rms * 4.0 * self.sensitivity * input_gain)
 
         windowed = mono * self._hanning_window if len(mono) == CHUNK_SIZE else mono * np.hanning(len(mono))
         spectrum = np.abs(np.fft.rfft(windowed))
@@ -243,6 +297,11 @@ class AudioCapture:
             bass = self._band_energy(spectrum, freqs, 20, 250, self.bass_gain)
             mid = self._band_energy(spectrum, freqs, 250, 4000, self.mid_gain)
             treble = self._band_energy(spectrum, freqs, 4000, 16000, self.treble_gain)
+
+        if input_gain != 1.0:
+            bass = min(1.0, bass * input_gain)
+            mid = min(1.0, mid * input_gain)
+            treble = min(1.0, treble * input_gain)
 
         self._sm_volume = self._envelope(self._sm_volume, volume)
         self._sm_bass = self._envelope(self._sm_bass, bass)

@@ -32,6 +32,12 @@ def _app_dir():
 
 
 APP_DIR = _app_dir()
+# Ресурсы (иконки, рендеры комнаты) в onefile лежат в _MEIPASS, а рядом с exe
+# их нет. Для конфига остаётся APP_DIR, для ресурсов — RESOURCE_DIR.
+RESOURCE_DIR = (
+    getattr(sys, "_MEIPASS", APP_DIR) if getattr(sys, "frozen", False)
+    else os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+)
 
 DEFAULT_CONFIG = {
     # BLE
@@ -49,6 +55,7 @@ DEFAULT_CONFIG = {
     "wled_serial_baud": 115200,  # скорость USB-соединения (115200 хватает на 50-100 диодов)
     "strip_meters": 5,           # метраж ленты (1-10м)
     "strip_density": 30,         # плотность светодиодов на метр (18/30/60/144)
+    "mapping_file": "",          # путь к JSON-маппингу для автозагрузки
     "screen_width": 1920,        # ширина экрана для маппинга (обновляется автоматически)
     "screen_height": 1080,       # высота экрана для маппинга (обновляется автоматически)
     "monitor_diagonal_inches": 24.0,  # диагональ монитора - для точного расчёта реального периметра
@@ -120,6 +127,7 @@ DEFAULT_CONFIG = {
         "neighbor_blend": 0.35,      # 0 = выключено, 0.5 = сильное размытие
         # Усреднять цвет в линейном свете (гамма 2.2) - физически корректно
         "linear_average": True,
+        "color_algorithm": "adaptive",  # legacy | adaptive
         "gamma": 1.0                 # 0.7 = светлее, 1.6 = темнее (для HDR/блёклых сцен)
     },
 
@@ -165,6 +173,8 @@ DEFAULT_CONFIG = {
 
     # Привязка приложений к сценам: {"cs2.exe": "Игра", "chrome.exe": "Кино"}
     "app_scenes": {},
+    # Привязка по заголовку окна: {"YouTube": "Кино", "Twitch": "Игра"}
+    "app_title_scenes": {},
 
     # Режим «Лампа»: лента как светильник, когда Ambilight не нужен
     "lamp": {
@@ -258,7 +268,9 @@ DEFAULT_CONFIG = {
     "audio": {
         "enabled": False,
         "mode": "hybrid",       # hybrid | flash | visualizer
-        "device_name": None,    # None = устройство вывода по умолчанию
+        "source": "loopback",   # loopback (звук колонок) | input (микрофон/аудиокарта)
+        "device_name": None,    # None = устройство по умолчанию
+        "input_gain": 2.0,      # усиление для гитары/линейного входа
         "sensitivity": 1.0,
         "bass_gain": 1.0,
         "mid_gain": 1.0,
@@ -387,7 +399,7 @@ _DICT_SECTIONS = (
     "standby", "calibration", "brightness", "hud_mask",
     "filters", "audio", "process_profile_map",
     "adaptive_fps", "power", "auto_pause", "hotkeys", "content", "remote",
-    "lamp", "schedule", "sunrise", "app_scenes", "mqtt", "updates",
+    "lamp", "schedule", "sunrise", "app_scenes", "app_title_scenes", "mqtt", "updates",
 )
 
 _INT_RANGES = {
