@@ -45,6 +45,16 @@ class AdaptiveColorTests(unittest.TestCase):
         out = self.sampler.sample(frame, clip_rect=(0, 64, 0, 64))
         self.assertTrue(np.allclose(out[0], (40, 180, 120), atol=1.0))
 
+    def test_bgra_matches_rgb(self):
+        rgb = frame_with(np.full((11, 11, 3), (40, 180, 120), np.uint8))
+        bgra = np.concatenate(
+            [rgb[..., 2:3], rgb[..., 1:2], rgb[..., 0:1], np.full_like(rgb[..., :1], 255)],
+            axis=-1,
+        )
+        a = self.sampler.sample(rgb)
+        b = self.sampler.sample(bgra, bgra=True)
+        self.assertTrue(np.allclose(a, b, atol=1.0))
+
 
 if __name__ == "__main__":
     unittest.main()

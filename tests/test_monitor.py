@@ -18,7 +18,7 @@ class MonitorTests(unittest.TestCase):
         def fake_create(**kwargs):
             calls.update(kwargs)
             return FakeCamera()
-        with mock.patch.object(capture.dxcam, "create", side_effect=fake_create):
+        with mock.patch.object(capture, "_load_dxcam", return_value=mock.Mock(create=fake_create)):
             cap = capture.ScreenCapture(target_fps=10, backend="dxgi", region=(10, 20, 300, 200), monitor_index=2)
             cap._start_dxgi()
         self.assertEqual(calls["output_idx"], 2)

@@ -3,6 +3,7 @@
 """
 
 import copy
+import gc
 import json
 import logging
 import os
@@ -17,7 +18,7 @@ import time
 from PyQt5.QtCore import Qt, QTimer, QRectF, QTime, QUrl, pyqtSignal
 from PyQt5.QtGui import (
     QImage, QPixmap, QPainter, QColor, QPen, QIcon, QKeySequence,
-    QDesktopServices,
+    QDesktopServices, QPixmapCache,
 )
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
@@ -953,6 +954,18 @@ class MainWindow(QMainWindow):
         if self.config.get("auto_connect", True):
             # небольшая задержка, чтобы фоновый поток успел стартовать
             QTimer.singleShot(800, self._auto_connect_on_startup)
+
+        # Pixmap-кэш Qt по умолчанию ~10 МБ; для превью комнаты/кадра хватает
+        # 1 МБ. Сборка мусора после старта освобождает циклические Qt-объекты.
+        QPixmapCache.setCacheLimit(1024)
+        QTimer.singleShot(4000, self._compact_memory)
+        QTimer.singleShot(9000, self._compact_memory)
+
+    def _compact_memory(self):
+        try:
+            gc.collect()
+        except Exception:
+            log.debug("Не удалось собрать мусор", exc_info=True)
 
     def _setup_hotkeys(self):
         """Включает глобальные горячие клавиши, если они разрешены в настройках."""

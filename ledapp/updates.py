@@ -5,11 +5,12 @@
 приложение продолжает работать.
 """
 
+import json
 import logging
 import re
+import shutil
+import subprocess
 from dataclasses import dataclass
-
-import requests
 
 from . import __version__
 
@@ -19,6 +20,35 @@ REPO = "arsinema/ledambilight"
 LATEST_API = f"https://api.github.com/repos/{REPO}/releases/latest"
 FALLBACK_URL = f"https://github.com/{REPO}/releases/latest"
 TIMEOUT = 6.0
+
+# urllib.request и WinHTTP тянут в процесс ssl/http.client или native DLL.
+# Проверка обновлений — один HTTPS GET; запускаем системный curl.exe и
+# разбираем JSON. Сам Python-процесс остаётся легче на ~6-8 МБ.
+CURL = shutil.which("curl.exe") or shutil.which("curl")
+
+
+def _http_get_json(url, timeout=TIMEOUT, user_agent="LEDAmbilight"):
+    """HTTPS GET через curl; None при любой сетевой/HTTP-ошибке."""
+    if not CURL:
+        return None
+    command = [
+        CURL, "-sS", "-L", "--max-time", str(max(1, int(timeout))),
+        "-H", "Accept: application/vnd.github+json",
+        "-H", f"User-Agent: {user_agent}",
+        url,
+    ]
+    try:
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        result = subprocess.run(
+            command, capture_output=True, timeout=timeout + 2,
+            creationflags=flags, check=False,
+        )
+        if result.returncode != 0 or not result.stdout:
+            return None
+        return json.loads(result.stdout.decode("utf-8", errors="replace"))
+    except Exception as exc:
+        log.info("Проверка обновлений не удалась: %s", exc)
+        return None
 
 
 @dataclass(frozen=True)
@@ -55,19 +85,10 @@ def is_newer(latest, current):
 def check_for_update(current=None, timeout=TIMEOUT):
     """Возвращает UpdateInfo или None, если проверить не удалось."""
     current = current or __version__
-    try:
-        response = requests.get(
-            LATEST_API,
-            timeout=timeout,
-            headers={
-                "Accept": "application/vnd.github+json",
-                "User-Agent": f"LEDAmbilight/{current}",
-            },
-        )
-        response.raise_for_status()
-        payload = response.json()
-    except Exception as exc:  # сеть, DNS, лимит GitHub, прокси и т.п.
-        log.info("Проверка обновлений не удалась: %s", exc)
+    payload = _http_get_json(
+        LATEST_API, timeout=timeout, user_agent=f"LEDAmbilight/{current}"
+    )
+    if not isinstance(payload, dict):
         return None
 
     tag = str(payload.get("tag_name") or "").strip()

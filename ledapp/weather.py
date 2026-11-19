@@ -3,6 +3,7 @@
 бесплатный сервис без регистрации и API-ключей.
 """
 
+import importlib.util
 import logging
 import threading
 import time
@@ -11,11 +12,9 @@ from urllib.parse import quote
 
 log = logging.getLogger(__name__)
 
-try:
-    import requests
-    HAS_REQUESTS = True
-except Exception:
-    HAS_REQUESTS = False
+# requests тянет urllib3/сертификаты (~16 МБ). Погода нужна только в
+# дежурном режиме — не грузим её на старте обычного Ambilight.
+HAS_REQUESTS = importlib.util.find_spec("requests") is not None
 
 
 # Код погодного явления (WWO/wttr.in) -> приятный цвет-настроение.
@@ -69,6 +68,8 @@ def fetch_weather_color(city: str) -> Optional[Tuple[int, int, int]]:
     if not HAS_REQUESTS or not city:
         return None
     try:
+        import requests
+
         # Название города может содержать пробелы и кириллицу - кодируем
         url = f"https://wttr.in/{quote(city)}"
         resp = requests.get(url, params={"format": "j1"}, timeout=6,

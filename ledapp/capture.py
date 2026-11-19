@@ -19,10 +19,18 @@ from .color_engine import compute_dominant_color, mean_color
 
 log = logging.getLogger(__name__)
 
-try:
-    import dxcam
-except ImportError:
-    dxcam = None
+# dxcam загружается лениво: его native DXGI/NVIDIA-драйверы занимают ~40 МБ
+# и не нужны, пока захват не запущен. Оставляем имя для тестов/подмены.
+dxcam = None
+
+
+def _load_dxcam():
+    global dxcam
+    if dxcam is not None:
+        return dxcam
+    import dxcam as module
+    dxcam = module
+    return dxcam
 
 try:
     from windows_capture import WindowsCapture  # type: ignore
@@ -76,6 +84,7 @@ class ScreenCapture:
             except (TypeError, ValueError):
                 self.region = None
         self.camera = None
+        self.frame_bgra = False
         self._wgc = None
         self._wgc_control = None
         self._wgc_frame = None
@@ -95,10 +104,15 @@ class ScreenCapture:
         log.info("Захват экрана: DXGI%s%s", monitor, region)
 
     def _start_dxgi(self):
-        if dxcam is None:
+        # dxcam тянет native DXGI/NVIDIA-драйверы (~40 МБ). Пока захват не
+        # запущен, он не нужен: грузим только здесь, а не при импорте worker.
+        self.frame_bgra = True
+        try:
+            module = _load_dxcam()
+        except ImportError as exc:
             raise RuntimeError(
                 "dxcam недоступен. Захват экрана работает только на Windows."
-            )
+            ) from exc
         # Родной формат DXGI — BGRA: dxcam отдаёт его как есть, не трогая
         # цветовые каналы и не импортируя cv2. В RGB переводим сами в
         # get_frame() — см. bgra_to_rgb(). Если попросить output_color="RGB",
@@ -110,7 +124,7 @@ class ScreenCapture:
         if self.region:
             left, top, width, height = self.region
             region = (left, top, left + width, top + height)
-        self.camera = dxcam.create(
+        self.camera = module.create(
             output_idx=self.monitor_index,
             output_color="BGRA",
             max_buffer_len=2,
@@ -131,6 +145,7 @@ class ScreenCapture:
             return False
         if not HAS_WGC:
             return False
+        self.frame_bgra = False
         try:
             # WGC конвертирует цвет в своём нативном коде (не через cv2),
             # поэтому здесь можно сразу просить RGB.
@@ -197,9 +212,10 @@ class ScreenCapture:
         frame = self.camera.get_latest_frame()
         if frame is None:
             return None
-        # dxcam отдаёт BGRA из переиспользуемого буфера — копируем в RGB,
-        # пока следующий кадр не перезаписал память.
-        return bgra_to_rgb(frame)
+        # DXGI отдаёт BGRA из переиспользуемого буфера. Не копируем весь
+        # full-HD кадр в RGB (11 мс/кадр): сэмплер диодов читает BGRA напрямую,
+        # а небольшой превью-кадр переводится отдельно.
+        return frame
 
 
 # Кэш последнего активного окна - GetForegroundWindow() дешёвый вызов, а вот

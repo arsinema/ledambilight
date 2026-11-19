@@ -205,7 +205,7 @@ class StripMapper:
         return None
 
     def get_led_color(self, frame: np.ndarray, led_index: int, mode: str = "average",
-                      clip_rect=None, linear: bool = True) -> Tuple[int, int, int]:
+                      clip_rect=None, linear: bool = True, bgra: bool = False) -> Tuple[int, int, int]:
         """
         Вычисляет цвет для одного светодиода на основе куска экрана,
         который он "видит".
@@ -253,6 +253,8 @@ class StripMapper:
         patch = frame[y0:y1, x0:x1]
         if patch.size == 0:
             return (0, 0, 0)
+        if bgra:
+            patch = patch[..., 2::-1]
 
         if mode == "dominant":
             # Область уже маленькая (обычно ~10x10 пикселей) - stride=1,
@@ -264,7 +266,8 @@ class StripMapper:
         return (int(round(r)), int(round(g)), int(round(b)))
 
     def get_all_leds_colors(self, frame: np.ndarray, mode: str = "average",
-                            clip_rect=None, linear: bool = True) -> List[Tuple[int, int, int]]:
+                            clip_rect=None, linear: bool = True,
+                            bgra: bool = False) -> List[Tuple[int, int, int]]:
         """
         Вычисляет цвета для всех светодиодов.
 
@@ -278,7 +281,8 @@ class StripMapper:
             Список кортежей (R, G, B) для каждого светодиода
         """
         get_color = self.get_led_color
-        return [get_color(frame, i, mode=mode, clip_rect=clip_rect, linear=linear)
+        return [get_color(frame, i, mode=mode, clip_rect=clip_rect,
+                          linear=linear, bgra=bgra)
                 for i in range(self.led_count)]
 
     def save_to_file(self, filepath: str, strip_width: int = 10, exact_positions: bool = False):

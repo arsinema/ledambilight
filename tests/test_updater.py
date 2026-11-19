@@ -11,15 +11,6 @@ from unittest import mock
 from ledapp import updater, updates
 
 
-class FakeResponse:
-    def __init__(self, payload):
-        self._payload = payload
-    def raise_for_status(self):
-        pass
-    def json(self):
-        return self._payload
-
-
 def asset(name, url, data=b"", sha=None):
     return updates.ReleaseAsset(
         name=name, url=url, size=len(data),
@@ -28,6 +19,16 @@ def asset(name, url, data=b"", sha=None):
 
 
 class UpdaterTests(unittest.TestCase):
+    def test_http_get_json_parses_curl(self):
+        fake = mock.Mock(returncode=0, stdout=b'{"tag_name": "v1.5.0"}')
+        with mock.patch.object(updates, "CURL", "curl.exe"), \
+                mock.patch.object(updates.subprocess, "run", return_value=fake):
+            self.assertEqual(updates._http_get_json("https://example")["tag_name"], "v1.5.0")
+        fake = mock.Mock(returncode=1, stdout=b"")
+        with mock.patch.object(updates, "CURL", "curl.exe"), \
+                mock.patch.object(updates.subprocess, "run", return_value=fake):
+            self.assertIsNone(updates._http_get_json("https://example"))
+
     def test_check_for_update_parses_assets(self):
         payload = {
             "tag_name": "v1.5.0", "html_url": "https://example/rel",
@@ -38,7 +39,7 @@ class UpdaterTests(unittest.TestCase):
                 "size": 123, "digest": "sha256:" + "a" * 64,
             }],
         }
-        with mock.patch.object(updates.requests, "get", return_value=FakeResponse(payload)):
+        with mock.patch.object(updates, "_http_get_json", return_value=payload):
             info = updates.check_for_update("1.4.1")
         self.assertTrue(info.available)
         self.assertEqual(info.latest, "1.5.0")
@@ -119,7 +120,7 @@ class UpdaterTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             good = asset("LEDAmbilight.exe", "https://github.com/x", b"abc", sha="0" * 64)
             info = updates.UpdateInfo("1.4.1", "1.5.0", True, "u", assets=(good,))
-            with mock.patch.object(updater.requests, "get", return_value=BadResponse()):
+            with mock.patch.object(updater, "_http_get", return_value=BadResponse()):
                 with self.assertRaises(updater.UpdateError):
                     updater.download_update(info, os.path.join(folder, "out"))
 
@@ -150,7 +151,7 @@ class UpdaterTests(unittest.TestCase):
             info = updates.UpdateInfo("1.4.1", "1.5.0", True, "u", assets=(good,))
             cancel = threading.Event()
             cancel.set()
-            with mock.patch.object(updater.requests, "get", return_value=SlowResponse()):
+            with mock.patch.object(updater, "_http_get", return_value=SlowResponse()):
                 with self.assertRaises(updater.UpdateCancelled):
                     updater.download_update(info, os.path.join(folder, "out"), cancel=cancel)
 

@@ -72,9 +72,12 @@ class AdaptiveSampler:
             w = np.exp(-((yy - cy) ** 2 + (xx - cx) ** 2) / (2.0 * sigma * sigma))
             self.weights[i, : y1 - y0, : x1 - x0] = w.astype(np.float32)
 
-    def _fill(self, frame, clip_rect=None):
+    def _fill(self, frame, clip_rect=None, bgra=False):
         for i, (y0, y1, x0, x1) in enumerate(self.boxes):
-            self.patches[i, : y1 - y0, : x1 - x0] = frame[y0:y1, x0:x1]
+            patch = frame[y0:y1, x0:x1]
+            if bgra:
+                patch = patch[..., 2::-1]
+            self.patches[i, : y1 - y0, : x1 - x0] = patch
         if clip_rect is None:
             return self.weights
         top, bottom, left, right = (int(v) for v in clip_rect)
@@ -94,10 +97,10 @@ class AdaptiveSampler:
                 weights[i, :, col1:] = 0
         return weights
 
-    def sample(self, frame, clip_rect=None):
+    def sample(self, frame, clip_rect=None, bgra=False):
         if not self.boxes:
             return np.zeros((0, 3), np.float32)
-        weights = self._fill(frame, clip_rect)
+        weights = self._fill(frame, clip_rect, bgra=bgra)
         n, h, w = self.n, self.h, self.w
         patches = self.patches.astype(np.float32)
         wsum = weights.sum(axis=(1, 2), keepdims=True) + 1e-9

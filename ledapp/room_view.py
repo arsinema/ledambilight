@@ -64,11 +64,28 @@ class RoomView(QWidget):
         self._views = []
         self._pixmaps = []
         self._manifest = {}
-        self._load_assets()
+        self._assets_loaded = False
+        # Ассеты комнаты — пять full-HD QPixmap (~40 МБ). Грузим их только
+        # при первом показе вкладки, а таймер анимации не крутим впустую,
+        # пока комната скрыта.
         self._timer = QTimer(self)
         self._timer.setInterval(33)
         self._timer.timeout.connect(self._animate)
-        self._timer.start()
+
+    def _ensure_assets(self):
+        if not self._assets_loaded:
+            self._load_assets()
+            self._assets_loaded = True
+
+    def showEvent(self, event):  # noqa: N802
+        self._ensure_assets()
+        if not self._timer.isActive():
+            self._timer.start()
+        super().showEvent(event)
+
+    def hideEvent(self, event):  # noqa: N802
+        self._timer.stop()
+        super().hideEvent(event)
 
     def _load_assets(self):
         candidates = [
@@ -90,6 +107,10 @@ class RoomView(QWidget):
                     pixmap = QPixmap(path)
                     if pixmap.isNull():
                         raise OSError(path)
+                    # Room — превью, а не фоторедактор: 1280 px по ширине
+                    # достаточно и экономит ~25 МБ на пяти full-HD снимках.
+                    if pixmap.width() > 1280:
+                        pixmap = pixmap.scaledToWidth(1280, Qt.SmoothTransformation)
                     pixmaps.append(pixmap)
                 self._views = views
                 self._pixmaps = pixmaps
@@ -189,6 +210,7 @@ class RoomView(QWidget):
     # Отрисовка
     # ------------------------------------------------------------------
     def paintEvent(self, event):
+        self._ensure_assets()
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setRenderHint(QPainter.SmoothPixmapTransform, True)

@@ -60,6 +60,13 @@ class StripMapperSmokeTests(unittest.TestCase):
         colors = mapper.get_all_leds_colors(frame)
         self.assertEqual(len(colors), 8)
         self.assertTrue(all(c[1] > 100 for c in colors))
+        bgra = np.concatenate(
+            [frame[..., 2:3], frame[..., 1:2], frame[..., 0:1], np.full_like(frame[..., :1], 255)],
+            axis=-1,
+        )
+        bgra_colors = mapper.get_all_leds_colors(bgra, bgra=True)
+        for a, b in zip(colors, bgra_colors):
+            self.assertLessEqual(max(abs(a[i] - b[i]) for i in range(3)), 1)
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "mapping.json")
             mapper.save_to_file(path)

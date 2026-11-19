@@ -34,6 +34,10 @@ DEFAULT_IGNORE = {
     "plex.exe", "plexmediaplayer.exe", "explorer.exe", "steam.exe",
     "steamwebhelper.exe", "discord.exe", "telegram.exe", "zoom.exe",
     "skype.exe", "teams.exe", "ledambilight.exe", "deepseek harness.exe",
+    # Системные оболочки иногда тоже «полноэкранные» — это не игры.
+    "dwm.exe", "winlogon.exe", "csrss.exe", "svchost.exe", "lockapp.exe",
+    "searchhost.exe", "shellexperiencehost.exe", "startmenuexperiencehost.exe",
+    "textinputhost.exe", "systemsettings.exe", "backgroundtaskhost.exe",
 }
 
 

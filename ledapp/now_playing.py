@@ -27,12 +27,9 @@ try:
 except Exception:
     HAS_WINSDK = False
 
-try:
-    from PIL import Image
-    import numpy as np
-    HAS_PIL = True
-except Exception:
-    HAS_PIL = False
+import importlib.util
+
+HAS_PIL = importlib.util.find_spec("PIL") is not None
 
 
 async def _get_now_playing_async():
@@ -71,6 +68,9 @@ def _extract_color_from_image_bytes(data: bytes) -> Optional[Tuple[int, int, int
     if not HAS_PIL or not data:
         return None
     try:
+        import numpy as np
+        from PIL import Image
+
         img = Image.open(io.BytesIO(data)).convert("RGB")
         img = img.resize((32, 32))
         arr = np.asarray(img).reshape(-1, 3).astype(np.float32)

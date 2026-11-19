@@ -2,9 +2,9 @@
 Управление BLE-лентой ELK-BLEDOM: поиск, подключение, отправка цвета.
 """
 
-import logging
+from __future__ import annotations
 
-from bleak import BleakScanner, BleakClient
+import logging
 
 log = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ def power_command(on: bool):
 class BLEController:
     def __init__(self, write_uuid):
         self.write_uuid = write_uuid
-        self.client: BleakClient | None = None
+        self.client = None
         self.address: str | None = None
         self.name: str | None = None
 
@@ -40,6 +40,8 @@ class BLEController:
 
     async def scan(self, timeout=5):
         """Возвращает список найденных устройств [(name, address), ...]."""
+        from bleak import BleakScanner
+
         devices = await BleakScanner.discover(timeout=timeout)
         result = []
         for d in devices:
@@ -49,6 +51,8 @@ class BLEController:
 
     async def scan_for_elk(self, timeout=5):
         """Ищет конкретно ELK-устройство и возвращает (name, address) или None."""
+        from bleak import BleakScanner
+
         devices = await BleakScanner.discover(timeout=timeout)
         for d in devices:
             if "ELK" in (d.name or "").upper():
@@ -56,6 +60,8 @@ class BLEController:
         return None
 
     async def connect(self, address):
+        from bleak import BleakClient
+
         if self.client is not None:
             await self.disconnect()
 

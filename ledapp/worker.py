@@ -30,6 +30,7 @@ from .capture import (
     get_active_process_name,
     get_active_window_title,
     hud_rect,
+    bgra_to_rgb,
     get_center_area,
     get_quadrant_color,
     get_quadrant_dominant_color,
@@ -1573,9 +1574,11 @@ class LedWorker(QThread):
         if frame_h < 2 or frame_w < 2:
             return 0.005
 
-        small = frame[::ANALYSIS_STRIDE, ::ANALYSIS_STRIDE]
-        if small.size == 0:
+        small_raw = frame[::ANALYSIS_STRIDE, ::ANALYSIS_STRIDE]
+        if small_raw.size == 0:
             return 0.005
+        frame_bgra = bool(getattr(self._capture, "frame_bgra", False))
+        small = bgra_to_rgb(small_raw) if frame_bgra else small_raw
 
         content = self.config.get("content", {})
         info = self._analyzer.update(small)
@@ -1616,6 +1619,8 @@ class LedWorker(QThread):
             self._last_preview_time = now
             try:
                 preview = downsize_for_preview(frame, max_width=320)
+                if frame_bgra:
+                    preview = bgra_to_rgb(preview)
                 self.frame_preview.emit(preview)
             except Exception:
                 log.debug("Не удалось отправить кадр превью", exc_info=True)
@@ -1699,7 +1704,8 @@ class LedWorker(QThread):
                 await self.ble.send_color(r, g, b)
             elif self._strip_mode in ("wled", "wled_serial"):
                 await self._send_pixel_frame(frame, rect, send_color,
-                                             audio_active, audio_cfg, audio_mode, state)
+                                             audio_active, audio_cfg, audio_mode, state,
+                                             bgra=frame_bgra)
 
         delay = self._profile_delay(profile)
         if idle_frame:
@@ -1764,7 +1770,8 @@ class LedWorker(QThread):
         return self._adaptive_sampler
 
     async def _send_pixel_frame(self, frame, clip, fallback_color,
-                                audio_active, audio_cfg, audio_mode, state):
+                                audio_active, audio_cfg, audio_mode, state,
+                                bgra=False):
         """Считает и отправляет цвет каждого диода отдельно (если есть маппинг).
 
         clip — (top, bottom, left, right) разрешённой области: пользовательский
@@ -1783,15 +1790,17 @@ class LedWorker(QThread):
                 sampler = self._adaptive_for_frame(frame.shape[1], frame.shape[0])
                 if sampler is None:
                     raise RuntimeError("нет областей выборки")
-                pixels = sampler.sample(frame, clip_rect=clip)
+                pixels = sampler.sample(frame, clip_rect=clip, bgra=bgra)
             except Exception:
                 log.exception("Адаптивный сэмплер не сработал, откат на классический")
                 pixels = self.strip_mapper.get_all_leds_colors(
-                    frame, mode=sampling_mode, clip_rect=clip, linear=linear
+                    frame, mode=sampling_mode, clip_rect=clip, linear=linear,
+                    bgra=bgra,
                 )
         else:
             pixels = self.strip_mapper.get_all_leds_colors(
-                frame, mode=sampling_mode, clip_rect=clip, linear=linear
+                frame, mode=sampling_mode, clip_rect=clip, linear=linear,
+                bgra=bgra,
             )
         pixels = self._smooth_pixel_array(pixels)
         # Тот же цветовой пайплайн, что и для одиночного цвета (HSV, яркость,

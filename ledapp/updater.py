@@ -16,11 +16,16 @@ import sys
 import tempfile
 from urllib.parse import urlparse
 
-import requests
-
 from .updates import UpdateInfo
 
 log = logging.getLogger(__name__)
+
+
+def _http_get(url, **kwargs):
+    """Ленивый requests: не грузим его, пока не началось скачивание обновления."""
+    import requests
+
+    return requests.get(url, **kwargs)
 
 APP_ASSET_NAME = "LEDAmbilight.exe"
 MAX_ASSET_BYTES = 200 * 1024 * 1024
@@ -99,7 +104,7 @@ def download_update(info, destination_dir, progress=None, cancel=None, timeout=3
     hasher = hashlib.sha256()
     downloaded = 0
     try:
-        with requests.get(asset.url, stream=True, timeout=timeout) as response:
+        with _http_get(asset.url, stream=True, timeout=timeout) as response:
             response.raise_for_status()
             total = int(response.headers.get("Content-Length") or asset.size)
             with open(part, "wb") as handle:
