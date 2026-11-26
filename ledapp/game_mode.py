@@ -38,6 +38,10 @@ DEFAULT_IGNORE = {
     "dwm.exe", "winlogon.exe", "csrss.exe", "svchost.exe", "lockapp.exe",
     "searchhost.exe", "shellexperiencehost.exe", "startmenuexperiencehost.exe",
     "textinputhost.exe", "systemsettings.exe", "backgroundtaskhost.exe",
+    # Полноэкранные рабочие приложения — не игры.
+    "fbuddy crm.exe", "electron.exe", "notion.exe", "slack.exe", "code.exe",
+    "cursor.exe", "obs64.exe", "studio64.exe", "blender.exe", "photoshop.exe",
+    "illustrator.exe", "excel.exe", "winword.exe", "powerpnt.exe", "outlook.exe",
 }
 
 

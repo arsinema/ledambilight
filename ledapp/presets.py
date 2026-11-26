@@ -17,7 +17,7 @@ PRESET_VERSION = 1
 SECTION_KEYS = (
     "calibration", "brightness", "filters", "power", "content",
     "audio", "profiles", "lamp", "standby", "schedule", "sunrise",
-    "hud_mask", "app_scenes",
+    "hud_mask", "app_scenes", "scene_composer", "automation",
 )
 TOP_KEYS = (
     "analysis_area_percent", "led_sampling_mode", "sample_width",

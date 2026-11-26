@@ -16,6 +16,9 @@ import os
 import shutil
 import sys
 
+from .scene_model import default_compositions
+from .automation import default_rules
+
 log = logging.getLogger(__name__)
 
 
@@ -53,6 +56,7 @@ DEFAULT_CONFIG = {
     "led_start_offset": 0,       # сколько первых диодов пропустить (останутся тёмными)
     "wled_serial_port": "COM5",  # COM-порт для подключения по USB (Adalight)
     "wled_serial_baud": 115200,  # скорость USB-соединения (115200 хватает на 50-100 диодов)
+    "extra_wleds": [],          # 2.0: дополнительные WLED-устройства
     "strip_meters": 5,           # метраж ленты (1-10м)
     "strip_density": 30,         # плотность светодиодов на метр (18/30/60/144)
     "mapping_file": "",          # путь к JSON-маппингу для автозагрузки
@@ -175,6 +179,34 @@ DEFAULT_CONFIG = {
     "app_scenes": {},
     # Привязка по заголовку окна: {"YouTube": "Кино", "Twitch": "Игра"}
     "app_title_scenes": {},
+
+    # --- 2.0: композитор, автоматизация, интеграции ---
+    "scene_composer": {
+        "enabled": False,
+        "active": "classic",
+        "compositions": default_compositions(),
+    },
+    "automation": {
+        "enabled": False,
+        "rules": default_rules(),
+    },
+    "integrations": {
+        "spotify": {
+            "enabled": False,
+            "client_id": "",
+            "redirect_uri": "http://127.0.0.1:8888/callback",
+        },
+        "telegram": {
+            "enabled": False,
+            "chat_id": "",
+            "notifications": True,
+            "commands": True,
+        },
+        "windows_notifications": {
+            "enabled": False,
+            "apps": [],
+        },
+    },
 
     # Автоматические режимы для игр: {"cs2.exe": {"mode": "ambilight_audio"}}
     "game_mode": {
@@ -407,7 +439,7 @@ _DICT_SECTIONS = (
     "filters", "audio", "process_profile_map",
     "adaptive_fps", "power", "auto_pause", "hotkeys", "content", "remote",
     "lamp", "schedule", "sunrise", "app_scenes", "app_title_scenes", "mqtt", "updates",
-    "game_mode",
+    "game_mode", "scene_composer", "automation", "integrations",
 )
 
 _INT_RANGES = {

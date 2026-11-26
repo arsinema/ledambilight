@@ -37,6 +37,10 @@ from .support_bundle import build_report, default_report_name
 from .presets import apply_preset, export_preset, mapping_payload, validate_preset
 from .game_mode import get_foreground_game, normalize_profile, process_alive
 from .game_setup_panel import GameSetupPanel
+from .composer_widget import ComposerWidget
+from .automation import AutomationEngine
+from .automation_widget import AutomationWidget
+from .integrations_widget import IntegrationsWidget
 from . import autostart, i18n, updater, __version__
 
 log = logging.getLogger(__name__)
@@ -830,6 +834,11 @@ class MainWindow(QMainWindow):
     update_checked = pyqtSignal(object)
     update_download_progress = pyqtSignal(int, int)
     update_download_finished = pyqtSignal(object, object, object)
+    spotify_status_changed = pyqtSignal(str, str)
+    spotify_track_changed = pyqtSignal(dict)
+    telegram_message_received = pyqtSignal(str, str, str)
+    telegram_status_changed = pyqtSignal(str, str)
+    windows_notification_received = pyqtSignal(dict)
 
     def __init__(self):
         super().__init__()
@@ -871,6 +880,16 @@ class MainWindow(QMainWindow):
         self.worker.diagnostics_ready.connect(self.on_diagnostics)
         self.worker.process_changed.connect(self.on_process_changed)
         self.worker.window_title_changed.connect(self.on_window_title_changed)
+        self.worker.process_changed.connect(
+            lambda name: self._automation_handle("process", {"process": name})
+        )
+        self.worker.window_title_changed.connect(
+            lambda title: self._automation_handle("window_title", {"title": title})
+        )
+        self.worker.status_changed.connect(
+            lambda text: self._automation_handle("wled_lost", {"text": text})
+            if "перестал" in str(text).lower() else None
+        )
         self.worker.beat_update.connect(self.on_beat_update)
         self.worker.start()
         QTimer.singleShot(800, self._load_startup_mapping)
@@ -879,6 +898,11 @@ class MainWindow(QMainWindow):
         self.update_checked.connect(self._on_update_checked)
         self.update_download_progress.connect(self._on_update_download_progress)
         self.update_download_finished.connect(self._on_update_download_finished)
+        self.spotify_status_changed.connect(self._on_spotify_status)
+        self.spotify_track_changed.connect(self._on_spotify_track)
+        self.telegram_message_received.connect(self._on_telegram_message)
+        self.telegram_status_changed.connect(self._on_telegram_status)
+        self.windows_notification_received.connect(self._on_windows_notification)
         self._update_progress_dialog = None
         self._update_cancel = None
         self._update_temp_dir = None
@@ -917,6 +941,18 @@ class MainWindow(QMainWindow):
         self._game_timer.timeout.connect(self._check_game_session)
         self._game_timer.start()
 
+        self.automation_engine = AutomationEngine(self.config)
+        self._automation_audio_timer = QTimer(self)
+        self._automation_audio_timer.setInterval(1000)
+        self._automation_audio_timer.timeout.connect(self._automation_audio_tick)
+        self._automation_audio_timer.start()
+        self._automation_time_timer = QTimer(self)
+        self._automation_time_timer.setInterval(30000)
+        self._automation_time_timer.timeout.connect(
+            lambda: self._automation_handle("time", {})
+        )
+        self._automation_time_timer.start()
+
         self.hotkey_filter = None
         self._setup_hotkeys()
 
@@ -927,6 +963,9 @@ class MainWindow(QMainWindow):
         self._last_scene_name = ""
         self._current_window_title = ""
         self._mqtt = None
+        self.spotify_client = None
+        self.telegram_bot = None
+        self.windows_notifications = None
         self._start_remote()
         self._start_mqtt()
         self._remote_timer = QTimer(self)
@@ -945,6 +984,7 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(3000, self._check_schedule)
 
         QTimer.singleShot(900, self._maybe_show_welcome)
+        QTimer.singleShot(1500, self._start_integrations_from_config)
 
         if self.config.get("updates", {}).get("check_on_start", True):
             # Тихо, через 5 секунд после старта: не задерживаем запуск и не
@@ -1111,6 +1151,7 @@ class MainWindow(QMainWindow):
             "audio": copy.deepcopy(self.config.get("audio", {})),
             "brightness": copy.deepcopy(self.config.get("brightness", {})),
             "filters": copy.deepcopy(self.config.get("filters", {})),
+            "scene_composer": copy.deepcopy(self.config.get("scene_composer", {})),
         }
         self._game_session = {
             "pid": game.pid,
@@ -1126,6 +1167,9 @@ class MainWindow(QMainWindow):
         self._apply_game_audio(mode)
         self.status_label.setText(f"Игра: {game.process} — режим {mode}")
         log.info("Игровая сессия: %s, режим %s", game.process, mode)
+        self._automation_handle(
+            "game", {"event": "start", "process": game.process.lower()}
+        )
 
     def _apply_game_audio(self, mode):
         audio = self.config.setdefault("audio", {})
@@ -1150,10 +1194,11 @@ class MainWindow(QMainWindow):
         if self._game_session is None:
             return
         snapshot = self._game_snapshot
+        process = (self._game_session or {}).get("process", "")
         self._game_session = None
         self._game_snapshot = None
         if snapshot:
-            for key in ("audio", "brightness", "filters"):
+            for key in ("audio", "brightness", "filters", "scene_composer"):
                 if key in snapshot:
                     self.config[key] = snapshot[key]
             scene = snapshot.get("scene")
@@ -1167,9 +1212,13 @@ class MainWindow(QMainWindow):
             else:
                 self.worker.stop_audio()
             self._sync_audio_ui()
+            widget = self.__dict__.get("composer_widget")
+            if widget is not None:
+                widget._refresh_all()
             self._queue_save()
         self.status_label.setText("Игровая сессия завершена — настройки восстановлены")
         log.info("Игровая сессия завершена, настройки восстановлены")
+        self._automation_handle("game", {"event": "end", "process": process})
 
     def _sync_audio_ui(self):
         """Обновляет виджеты звука после смены игры/восстановления."""
@@ -1404,12 +1453,17 @@ class MainWindow(QMainWindow):
 
         tabs = QTabWidget()
         root.addWidget(tabs)
+        self.tabs = tabs
 
         tabs.addTab(self._wrap_scroll(self._build_connection_tab()), "Подключение")
         preview_tab_index = tabs.addTab(self._wrap_scroll(self._build_preview_tab()), "Просмотр захвата")
         tabs.addTab(self._build_room_tab(), "Комната")
         tabs.addTab(self._wrap_scroll(self._build_calibration_tab()), "Калибровка")
         tabs.addTab(self._wrap_scroll(self._build_hud_tab()), "Зоны / HUD")
+        self._lazy_tabs = {}
+        self._add_lazy_tab(tabs, "Композитор", self._build_composer_tab)
+        self._add_lazy_tab(tabs, "Автоматизация", self._build_automation_tab)
+        tabs.addTab(self._build_integrations_tab(), "Интеграции")
         tabs.addTab(self._wrap_scroll(self._build_filters_tab()), "Фильтры")
         tabs.addTab(self._wrap_scroll(self._build_audio_tab()), "Звук")
         tabs.addTab(self._wrap_scroll(self._build_strip_config_tab()), "Конфигурация ленты")
@@ -1419,9 +1473,8 @@ class MainWindow(QMainWindow):
         tabs.addTab(self._wrap_scroll(self._build_system_tab()), "Система")
         QTimer.singleShot(0, self._refresh_room_strip)
 
-        tabs.currentChanged.connect(
-            lambda idx: self.worker.set_preview_active(idx == preview_tab_index)
-        )
+        tabs.currentChanged.connect(self._on_tab_changed)
+        self._preview_tab_index = preview_tab_index
         # по умолчанию открыта вкладка "Подключение" (индекс 0) — превью не активно,
         # пока пользователь сам не откроет вкладку "Просмотр захвата"
         self.worker.set_preview_active(tabs.currentIndex() == preview_tab_index)
@@ -1447,6 +1500,32 @@ class MainWindow(QMainWindow):
         root.addLayout(footer)
 
     # -- Вкладка дежурного режима (дыхание в простое) --
+
+    def _add_lazy_tab(self, tabs, title, builder):
+        placeholder = QWidget()
+        index = tabs.addTab(placeholder, title)
+        self._lazy_tabs[index] = {
+            "tabs": tabs, "title": title, "builder": builder,
+            "built": False, "placeholder": placeholder,
+        }
+
+    def _on_tab_changed(self, index):
+        info = getattr(self, "_lazy_tabs", {}).get(index)
+        if info is not None and not info["built"]:
+            info["built"] = True
+            tabs = info["tabs"]
+            try:
+                widget = info["builder"]()
+                tabs.removeTab(index)
+                tabs.insertTab(index, widget, info["title"])
+                tabs.setCurrentIndex(index)
+                info["placeholder"].deleteLater()
+            except Exception:
+                info["built"] = False
+                log.exception("Не удалось построить вкладку %s", info["title"])
+        self.worker.set_preview_active(
+            index == getattr(self, "_preview_tab_index", -1)
+        )
 
     def _build_standby_tab(self):
         from .now_playing import NowPlayingMonitor
@@ -2337,6 +2416,401 @@ class MainWindow(QMainWindow):
 
     # -- Вкладка фильтров --
 
+    def _build_composer_tab(self):
+        self.composer_widget = ComposerWidget(
+            self.config, on_change=self._on_composer_changed, parent=self
+        )
+        return self._wrap_scroll(self.composer_widget)
+
+    def _on_composer_changed(self):
+        self.worker.update_config(self.config)
+        self._queue_save()
+        self.status_label.setText("Композиция обновлена")
+
+    def _build_automation_tab(self):
+        self.automation_widget = AutomationWidget(
+            self.config, on_change=self._on_automation_changed, parent=self
+        )
+        return self._wrap_scroll(self.automation_widget)
+
+    def _on_automation_changed(self):
+        engine = self.__dict__.get("automation_engine")
+        if engine is not None:
+            engine.reload()
+        self.worker.update_config(self.config)
+        self._queue_save()
+        self.status_label.setText("Правила автоматизации обновлены")
+
+    def _automation_audio_tick(self):
+        if self.__dict__.get("automation_engine") is None:
+            return
+        try:
+            state = self.worker.audio.get_state()
+            self._automation_handle("audio", {
+                "volume": state.volume, "bass": state.bass,
+                "mid": state.mid, "treble": state.treble, "beat": state.beat,
+            })
+        except Exception:
+            log.debug("Не удалось проверить аудио-правила", exc_info=True)
+
+    def _automation_handle(self, event, payload=None):
+        engine = self.__dict__.get("automation_engine")
+        if engine is None or not engine.enabled():
+            return
+        try:
+            context = {
+                "process": self.__dict__.get("_current_process", "") or "",
+                "title": self.__dict__.get("_current_window_title", "") or "",
+                "composition": (self.config.get("scene_composer") or {}).get("active", ""),
+                "scene": self._last_scene_name,
+                "volume": self.worker.audio.get_state().volume,
+            }
+            matches = engine.handle(event, payload or {}, context)
+            for match in matches:
+                self._run_automation_action(match.rule, match.action)
+        except Exception:
+            log.exception("Ошибка автоматизации для события %s", event)
+
+    def _run_automation_action(self, rule, action):
+        atype = action.get("type")
+        log.info("Автоматизация «%s»: %s", rule.name, atype)
+        if atype == "set_composition":
+            composition_id = action.get("composition", "")
+            section = self.config.setdefault("scene_composer", {})
+            valid = {
+                item.get("id") for item in section.get("compositions", [])
+                if isinstance(item, dict)
+            }
+            if composition_id in valid:
+                section["enabled"] = True
+                section["active"] = composition_id
+                self.worker.update_config(self.config)
+                widget = self.__dict__.get("composer_widget")
+                if widget is not None:
+                    widget._refresh_all()
+                self._queue_save()
+        elif atype == "set_scene":
+            scene = action.get("scene", "")
+            if scene:
+                self._apply_scene(scene)
+        elif atype == "brightness":
+            try:
+                delta = float(action.get("delta", 0)) / 100.0
+            except (TypeError, ValueError):
+                delta = 0.0
+            if delta:
+                self._nudge_brightness(delta)
+        elif atype == "notification":
+            self.worker.notifications.push(
+                text=action.get("text", "Событие"),
+                color=action.get("color", [80, 200, 255]),
+                source="automation",
+                duration=action.get("duration", 2.0),
+            )
+        elif atype == "telegram":
+            self._automation_send_telegram(action.get("text", ""))
+        elif atype == "pause":
+            self._on_stop_capture_clicked()
+        elif atype == "resume":
+            self._on_start_capture_clicked()
+        elif atype == "blackout":
+            self.worker.blackout()
+
+    def _automation_send_telegram(self, text):
+        integration = self.telegram_bot
+        if integration is not None:
+            integration.send(text)
+        else:
+            self.status_label.setText(f"Telegram не подключён: {text}")
+
+    # ------------------------------------------------------------------
+    # Интеграции
+
+    def _build_integrations_tab(self):
+        handlers = {
+            "spotify_connect": self._spotify_connect,
+            "spotify_logout": self._spotify_logout,
+            "spotify_control": self._spotify_control,
+            "telegram_start": self._telegram_start,
+            "telegram_stop": self._telegram_stop,
+            "telegram_test": self._telegram_test,
+            "windows_notifications": self._windows_notifications_toggle,
+            "test_notification": self._test_notification,
+        }
+        self.integrations_widget = IntegrationsWidget(
+            self.config, handlers=handlers,
+            on_change=self._on_integrations_changed, parent=self,
+        )
+        return self.integrations_widget
+
+    def _on_integrations_changed(self):
+        self.worker.update_config(self.config)
+        self._queue_save()
+
+    def _start_integrations_from_config(self):
+        cfg = self.config.get("integrations", {})
+        spotify_cfg = cfg.get("spotify", {})
+        if spotify_cfg.get("enabled") and spotify_cfg.get("client_id"):
+            try:
+                client = self._make_spotify_client(spotify_cfg)
+                if client.configured():
+                    client.start()
+                    self.spotify_client = client
+                    self.integrations_widget.set_spotify_status("Подключён")
+            except Exception as exc:
+                log.warning("Spotify автозапуск: %s", exc)
+        telegram_cfg = cfg.get("telegram", {})
+        if telegram_cfg.get("enabled"):
+            try:
+                bot = self._make_telegram_bot()
+                if bot.start():
+                    self.telegram_bot = bot
+                    self.integrations_widget.set_telegram_status("Подключён")
+            except Exception as exc:
+                log.warning("Telegram автозапуск: %s", exc)
+        if cfg.get("windows_notifications", {}).get("enabled"):
+            self._windows_notifications_toggle(True)
+
+    def _make_spotify_client(self, cfg=None):
+        from .spotify_client import SpotifyClient
+        cfg = cfg or self.config.setdefault("integrations", {}).setdefault("spotify", {})
+        client = SpotifyClient(
+            client_id=cfg.get("client_id", ""),
+            redirect_uri=cfg.get("redirect_uri", "http://127.0.0.1:8888/callback"),
+            on_track=lambda track: self.spotify_track_changed.emit(dict(track or {})),
+            on_status=lambda state, message: self.spotify_status_changed.emit(state, message),
+        )
+        return client
+
+    def _spotify_connect(self, client_id):
+        client_id = str(client_id or "").strip()
+        if not client_id:
+            self.integrations_widget.set_spotify_status("Укажи Client ID")
+            return
+        cfg = self.config.setdefault("integrations", {}).setdefault("spotify", {})
+        cfg["client_id"] = client_id
+        cfg["enabled"] = True
+        self._queue_save()
+        client = self._make_spotify_client(cfg)
+        self.spotify_client = client
+        self.integrations_widget.set_spotify_status("Открываю браузер для Spotify…")
+
+        def authorize():
+            ok = client.authorize()
+            if ok:
+                client.start()
+        self._spotify_auth_thread = threading.Thread(
+            target=authorize, daemon=True, name="spotify-auth"
+        )
+        self._spotify_auth_thread.start()
+
+    def _spotify_logout(self):
+        if self.spotify_client is not None:
+            self.spotify_client.logout()
+            self.spotify_client = None
+        cfg = self.config.setdefault("integrations", {}).setdefault("spotify", {})
+        cfg["enabled"] = False
+        self.worker.spotify_palette = None
+        self._queue_save()
+        self.integrations_widget.set_spotify_status("Отключён")
+
+    def _spotify_control(self, key):
+        client = self.spotify_client
+        if client is None:
+            self.integrations_widget.set_spotify_status("Spotify не подключён")
+            return
+        if key == "next":
+            client.next()
+        elif key == "previous":
+            client.previous()
+        elif key == "toggle":
+            if client.current.get("playing"):
+                client.pause()
+            else:
+                client.play()
+
+    def _on_spotify_status(self, state, message):
+        if self.integrations_widget is not None:
+            text = {"connected": "Подключён", "error": f"Ошибка: {message}",
+                    "stopped": "Остановлен"}.get(state, state)
+            self.integrations_widget.set_spotify_status(text)
+
+    def _on_spotify_track(self, track):
+        client = self.spotify_client
+        if client is not None:
+            self.worker.spotify_palette = client.palette or None
+        if track:
+            self.status_label.setText(
+                f"Spotify: {track.get('artists')} — {track.get('name')}"
+            )
+            self._automation_handle("spotify", {
+                "event": "track", "track": track.get("name", ""),
+                "playing": bool(track.get("playing")),
+            })
+        if client is not None and client.current:
+            self._automation_handle("spotify", {
+                "event": "play" if client.current.get("playing") else "pause",
+                "track": client.current.get("name", ""),
+            })
+
+    def _make_telegram_bot(self):
+        from .telegram_bot import TelegramBot
+        return TelegramBot(
+            on_message=lambda chat, text, sender: self.telegram_message_received.emit(
+                str(chat), str(text), str(sender)
+            ),
+            on_status=lambda state, message: self.telegram_status_changed.emit(
+                state, message
+            ),
+        )
+
+    def _telegram_start(self, token="", chat_id=""):
+        cfg = self.config.setdefault("integrations", {}).setdefault("telegram", {})
+        if chat_id:
+            cfg["chat_id"] = str(chat_id)
+        cfg["enabled"] = True
+        self._queue_save()
+        if self.telegram_bot is not None:
+            self.telegram_bot.stop()
+        try:
+            bot = self._make_telegram_bot()
+            bot.configure(token=token or None, chat_id=cfg.get("chat_id", "") or None)
+            if bot.start():
+                self.telegram_bot = bot
+                self.integrations_widget.set_telegram_status("Подключён")
+            else:
+                self.integrations_widget.set_telegram_status(
+                    bot.last_error or "Не удалось запустить"
+                )
+        except Exception as exc:
+            self.integrations_widget.set_telegram_status(f"Ошибка: {exc}")
+
+    def _telegram_stop(self):
+        if self.telegram_bot is not None:
+            self.telegram_bot.stop()
+            self.telegram_bot = None
+        cfg = self.config.setdefault("integrations", {}).setdefault("telegram", {})
+        cfg["enabled"] = False
+        self._queue_save()
+        self.integrations_widget.set_telegram_status("Остановлен")
+
+    def _telegram_test(self):
+        if self.telegram_bot is not None:
+            self.telegram_bot.send("LED Ambilight: тестовое уведомление")
+        else:
+            self.integrations_widget.set_telegram_status("Бот не запущен")
+
+    def _on_telegram_status(self, state, message):
+        if self.integrations_widget is not None:
+            text = {"connected": "Подключён", "error": f"Ошибка: {message}",
+                    "stopped": "Остановлен"}.get(state, state)
+            self.integrations_widget.set_telegram_status(text)
+
+    def _on_telegram_message(self, chat, text, sender):
+        cfg = self.config.get("integrations", {}).get("telegram", {})
+        if cfg.get("notifications", True):
+            self.worker.notifications.push(
+                text=text, color=(80, 180, 255), source="telegram", duration=2.5
+            )
+        self._automation_handle("telegram", {
+            "text": text, "chat": chat, "sender": sender,
+        })
+        if cfg.get("commands", True):
+            self._handle_telegram_command(chat, text)
+
+    def _handle_telegram_command(self, chat, text):
+        parts = str(text or "").strip().split()
+        if not parts:
+            return
+        command = parts[0].lower().split("@")[0]
+        bot = self.telegram_bot
+        if bot is None:
+            return
+        if command == "/status":
+            state = self.worker.audio.get_state()
+            bot.send(
+                f"LED Ambilight {__version__}\n"
+                f"Захват: {'вкл' if self._capture_running else 'выкл'}\n"
+                f"Сцена: {self._last_scene_name or '—'}\n"
+                f"Громкость: {state.volume:.2f}",
+                chat,
+            )
+        elif command == "/off":
+            self.worker.blackout()
+            bot.send("Лента погашена.", chat)
+        elif command == "/on":
+            self._on_start_capture_clicked()
+            bot.send("Захват включён.", chat)
+        elif command == "/scene":
+            name = " ".join(parts[1:]).strip()
+            if name in SCENE_PRESETS:
+                self._apply_scene(name)
+                bot.send(f"Сцена: {name}", chat)
+            else:
+                bot.send("Сцены: " + ", ".join(SCENE_PRESETS), chat)
+        elif command == "/brightness":
+            try:
+                value = max(0.1, min(1.5, float(parts[1]) / 100.0))
+            except (IndexError, ValueError):
+                bot.send("Формат: /brightness 70", chat)
+                return
+            self._set_nested("brightness", "max_scale", value)
+            bot.send(f"Яркость: {int(value * 100)}%", chat)
+
+    def _windows_notifications_toggle(self, enabled):
+        cfg = self.config.setdefault("integrations", {}).setdefault(
+            "windows_notifications", {}
+        )
+        cfg["enabled"] = bool(enabled)
+        self._queue_save()
+        if not enabled:
+            if self.windows_notifications is not None:
+                self.windows_notifications.stop()
+                self.windows_notifications = None
+            return
+        try:
+            from .windows_notifications import WindowsNotificationMonitor
+            monitor = WindowsNotificationMonitor(
+                on_notification=lambda item: self.windows_notification_received.emit(
+                    dict(item or {})
+                ),
+                on_status=lambda state, message: self.integrations_widget.set_windows_status(
+                    "Подключено" if state == "connected" else f"{state}: {message}"
+                ),
+            )
+            if monitor.start():
+                self.windows_notifications = monitor
+                self.integrations_widget.set_windows_status("Ожидаю уведомления")
+            else:
+                self.integrations_widget.set_windows_status(
+                    monitor.last_error or "winsdk не установлен"
+                )
+        except Exception as exc:
+            self.integrations_widget.set_windows_status(f"Ошибка: {exc}")
+
+    def _on_windows_notification(self, item):
+        app = str(item.get("app", "")).lower()
+        text = str(item.get("text", ""))
+        color = (120, 120, 255)
+        if "telegram" in app:
+            color = (80, 180, 255)
+        elif "discord" in app:
+            color = (130, 110, 255)
+        elif "mail" in app or "outlook" in app:
+            color = (255, 160, 80)
+        self.worker.notifications.push(
+            text=text, color=color, source=app or "windows", duration=2.0
+        )
+        self._automation_handle("notification", {
+            "app": app, "text": text,
+        })
+
+    def _test_notification(self):
+        self.worker.notifications.push(
+            text="Проверка уведомления", color=(80, 200, 255),
+            source="test", duration=2.5,
+        )
+
     def _build_filters_tab(self):
         w = QWidget()
         layout = QVBoxLayout(w)
@@ -3124,10 +3598,134 @@ class MainWindow(QMainWindow):
             "значит лента физически приклеена в обратную сторону от нарисованного пути."
         ))
 
+        extra_box = QGroupBox("Дополнительные ленты (2.0)")
+        extra_layout = QVBoxLayout(extra_box)
+        extra_layout.addWidget(QLabel(
+            "Несколько WLED-устройств на один экран: вторая лента за столом,\n"
+            "подсветка полки или второй монитор с тем же кадром."
+        ))
+        self.extra_wleds_list = QListWidget()
+        self.extra_wleds_list.setMaximumHeight(110)
+        self.extra_wleds_list.currentRowChanged.connect(self._on_extra_wled_selected)
+        extra_layout.addWidget(self.extra_wleds_list)
+        extra_form = QFormLayout()
+        self.extra_wled_name = QLineEdit()
+        self.extra_wled_host = QLineEdit()
+        self.extra_wled_host.setPlaceholderText("192.168.1.50")
+        self.extra_wled_port = QSpinBox()
+        self.extra_wled_port.setRange(1, 65535)
+        self.extra_wled_port.setValue(21324)
+        self.extra_wled_count = QSpinBox()
+        self.extra_wled_count.setRange(1, 1000)
+        self.extra_wled_count.setValue(90)
+        self.extra_wled_monitor = QSpinBox()
+        self.extra_wled_monitor.setRange(0, 15)
+        self.extra_wled_monitor.setToolTip(
+            "0 — основной монитор; 1, 2… — отдельный захват другого монитора"
+        )
+        self.extra_wled_offset = QSpinBox()
+        self.extra_wled_offset.setRange(0, 999)
+        extra_form.addRow("Название", self.extra_wled_name)
+        extra_form.addRow("IP", self.extra_wled_host)
+        extra_form.addRow("Порт", self.extra_wled_port)
+        extra_form.addRow("Диодов", self.extra_wled_count)
+        extra_form.addRow("Монитор", self.extra_wled_monitor)
+        extra_form.addRow("Смещение", self.extra_wled_offset)
+        extra_layout.addLayout(extra_form)
+        extra_buttons = QHBoxLayout()
+        add_extra = QPushButton("Добавить ленту")
+        add_extra.clicked.connect(self._on_add_extra_wled)
+        extra_buttons.addWidget(add_extra)
+        save_extra = QPushButton("Применить")
+        save_extra.clicked.connect(self._on_save_extra_wled)
+        extra_buttons.addWidget(save_extra)
+        remove_extra = QPushButton("Удалить")
+        remove_extra.clicked.connect(self._on_remove_extra_wled)
+        extra_buttons.addWidget(remove_extra)
+        extra_buttons.addStretch()
+        extra_layout.addLayout(extra_buttons)
+        layout.addWidget(extra_box)
+        self._refresh_extra_wleds_list()
         layout.addStretch()
-        
         self._on_strip_params_changed()
         return w
+
+    def _extra_wleds(self):
+        value = self.config.get("extra_wleds")
+        if not isinstance(value, list):
+            value = []
+            self.config["extra_wleds"] = value
+        return value
+
+    def _refresh_extra_wleds_list(self):
+        widget = getattr(self, "extra_wleds_list", None)
+        if widget is None:
+            return
+        widget.blockSignals(True)
+        widget.clear()
+        for item in self._extra_wleds():
+            if not isinstance(item, dict):
+                continue
+            widget.addItem(
+                f"{item.get('name') or item.get('host', '?')} — "
+                f"{item.get('host', '?')}:{item.get('port', 21324)}  "
+                f"({item.get('led_count', 90)} LED)"
+            )
+        widget.blockSignals(False)
+
+    def _on_extra_wled_selected(self, row):
+        items = self._extra_wleds()
+        if row < 0 or row >= len(items) or not isinstance(items[row], dict):
+            return
+        item = items[row]
+        self.extra_wled_name.setText(str(item.get("name", "")))
+        self.extra_wled_host.setText(str(item.get("host", "")))
+        self.extra_wled_port.setValue(int(item.get("port", 21324) or 21324))
+        self.extra_wled_count.setValue(int(item.get("led_count", 90) or 90))
+        self.extra_wled_monitor.setValue(int(item.get("monitor_index", 0) or 0))
+        self.extra_wled_offset.setValue(int(item.get("offset", 0) or 0))
+
+    def _on_add_extra_wled(self):
+        self._extra_wleds().append({
+            "name": f"Лента {len(self._extra_wleds()) + 1}",
+            "host": "", "port": 21324, "led_count": 90, "offset": 0,
+            "monitor_index": 0, "enabled": True,
+        })
+        self._refresh_extra_wleds_list()
+        self.extra_wleds_list.setCurrentRow(len(self._extra_wleds()) - 1)
+
+    def _on_save_extra_wled(self):
+        row = self.extra_wleds_list.currentRow()
+        items = self._extra_wleds()
+        if row < 0 or row >= len(items):
+            return
+        host = self.extra_wled_host.text().strip()
+        if not host:
+            self.status_label.setText("Укажи IP дополнительной ленты")
+            return
+        items[row].update({
+            "name": self.extra_wled_name.text().strip() or host,
+            "host": host,
+            "port": int(self.extra_wled_port.value()),
+            "led_count": int(self.extra_wled_count.value()),
+            "monitor_index": int(self.extra_wled_monitor.value()),
+            "offset": int(self.extra_wled_offset.value()),
+            "enabled": True,
+        })
+        self._refresh_extra_wleds_list()
+        self.worker.update_config(self.config)
+        self._queue_save()
+        self.status_label.setText("Дополнительные ленты обновлены")
+
+    def _on_remove_extra_wled(self):
+        row = self.extra_wleds_list.currentRow()
+        items = self._extra_wleds()
+        if row < 0 or row >= len(items):
+            return
+        del items[row]
+        self._refresh_extra_wleds_list()
+        self.worker.update_config(self.config)
+        self._queue_save()
 
     def _update_sweep_color_button(self, btn):
         """Красит кнопку выбора цвета тест-развёртки в текущий выбранный цвет"""
@@ -5106,7 +5704,28 @@ class MainWindow(QMainWindow):
             mode = payload.get("mode", "spectrum")
             self._remote_queue.put(lambda: self._set_audio_from_remote(enabled, mode))
             return True
+        if path == "/api/composition":
+            composition_id = str(payload.get("id", ""))
+            self._remote_queue.put(lambda: self._set_composition_remote(composition_id))
+            return True
         return None
+
+    def _set_composition_remote(self, composition_id):
+        section = self.config.setdefault("scene_composer", {})
+        valid = {
+            item.get("id") for item in section.get("compositions", [])
+            if isinstance(item, dict)
+        }
+        if composition_id not in valid:
+            return False
+        section["enabled"] = True
+        section["active"] = composition_id
+        self.worker.update_config(self.config)
+        widget = self.__dict__.get("composer_widget")
+        if widget is not None:
+            widget._refresh_all()
+        self._queue_save()
+        return True
 
     def _drain_remote_queue(self):
         while True:
@@ -5127,6 +5746,13 @@ class MainWindow(QMainWindow):
             "device": self.device_mode_label.text() if hasattr(self, "device_mode_label") else "",
             "brightness": int(round(float(self.config.get("brightness", {}).get("max_scale", 1.0)) * 100)),
             "scene": self._last_scene_name,
+            "composition": (self.config.get("scene_composer") or {}).get("active", ""),
+            "compositions": [
+                {"id": item.get("id", ""), "name": item.get("name", "")}
+                for item in (self.config.get("scene_composer") or {}).get(
+                    "compositions", []
+                ) if isinstance(item, dict)
+            ],
         }
         if self._mqtt is not None:
             self._mqtt.publish_state()

@@ -18,7 +18,10 @@ class BuildScriptTests(unittest.TestCase):
             build_exe.write_version_file(path)
             with open(path, encoding="utf-8") as handle:
                 text = handle.read()
-            self.assertIn("1, 9, 0, 0", text)
+            version = ", ".join(str(v) for v in build_exe._version_quad(
+                build_exe.APP_VERSION
+            ))
+            self.assertIn(version, text)
             self.assertIn("LED Ambilight", text)
 
     def test_help_does_not_launch_build(self):

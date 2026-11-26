@@ -83,6 +83,10 @@ PAGE = """<!DOCTYPE html>
   </div>
 
   <div class="row">
+    <select id="composition" title="Композиция"></select>
+  </div>
+
+  <div class="row">
     <button class="danger full" id="off">Погасить</button>
   </div>
 
@@ -94,6 +98,8 @@ async function post(path, body) {
   } catch (e) { /* телефон мог отвалиться от сети */ }
   setTimeout(refresh, 120);
 }
+
+let compositionSignature = '';
 
 async function refresh() {
   try {
@@ -107,6 +113,20 @@ async function refresh() {
       (s.scene ? ' · ' + s.scene : '');
     const t = document.getElementById('toggle');
     t.textContent = s.capturing ? 'Остановить подсветку' : 'Запустить подсветку';
+    const comps = s.compositions || [];
+    const signature = JSON.stringify(comps);
+    const select = document.getElementById('composition');
+    if (signature !== compositionSignature) {
+      compositionSignature = signature;
+      select.innerHTML = '';
+      for (const c of comps) {
+        const option = document.createElement('option');
+        option.value = c.id;
+        option.textContent = c.name || c.id;
+        select.appendChild(option);
+      }
+    }
+    if (s.composition) select.value = s.composition;
   } catch (e) { /* нет связи */ }
 }
 
@@ -120,6 +140,8 @@ document.getElementById('s-night').onclick = () => post('/api/scene', {name: 'Н
 document.getElementById('s-day').onclick = () => post('/api/scene', {name: 'Яркий день'});
 document.getElementById('a-off').onclick = () => post('/api/audio', {enabled: false});
 document.getElementById('a-spec').onclick = () => post('/api/audio', {enabled: true, mode: 'spectrum'});
+document.getElementById('composition').onchange = (e) =>
+  post('/api/composition', {id: e.target.value});
 
 refresh();
 setInterval(refresh, 3000);

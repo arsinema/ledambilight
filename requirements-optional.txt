@@ -8,6 +8,10 @@
 # Установка отдельно: pip install winsdk
 winsdk; platform_system == "Windows"
 
+# WGC / HDR / эксклюзивный полный экран. Без пакета приложение работает через DXGI.
+# Установка отдельно: pip install windows-capture
+windows-capture; platform_system == "Windows"
+
 # QR-код для пульта с телефона (вкладка «Система»).
 # Без пакета кнопка просто покажет ссылку текстом.
 # Установка отдельно: pip install qrcode

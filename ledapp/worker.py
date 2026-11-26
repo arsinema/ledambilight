@@ -52,6 +52,7 @@ from .wled_controller import WLEDController, MAX_DRGB_LEDS
 from .adaptive_color import AdaptiveSampler
 from .wled_serial_controller import WLEDSerialController
 from .strip_mapper import StripMapper
+from .scene_engine import SceneRenderer, active_composition
 from .now_playing import NowPlayingMonitor
 from .weather import WeatherMonitor
 
@@ -114,6 +115,8 @@ class LedWorker(QThread):
             config.get("wled_port", 21324),
             config.get("wled_led_count", 90),
         )
+        self.extra_wleds = []
+        self._reload_extra_wleds()
         self.wled_serial = WLEDSerialController(
             config.get("wled_serial_port", "COM5"),
             config.get("wled_serial_baud", 115200),
@@ -125,6 +128,9 @@ class LedWorker(QThread):
             config.get("screen_height", 1080),
         )
         self.color_engine = ColorEngine(self.config)
+        self.scene_engine = SceneRenderer()
+        self.notifications = self.scene_engine.notifications
+        self.spotify_palette = None
         self._capture = None
         self._last_profile = None
         self._last_process_name = None
@@ -432,6 +438,8 @@ class LedWorker(QThread):
                 pass
 
             self._warn_led_limit_if_needed()
+            if payload.get("extra_wleds") != getattr(self, "_extra_config", None):
+                self._reload_extra_wleds()
             await self._refresh_held_test_color()
             self._apply_target_fps(payload)
             self._apply_sample_width(payload)
@@ -1047,6 +1055,7 @@ class LedWorker(QThread):
         finally:
             target.min_send_interval = old_interval
             target.send_frame([(0, 0, 0)] * (count + offset))
+            self._send_extra_pixels([(0, 0, 0)] * count)
             self._sweep_active = False
 
     # ------------------------------------------------------------------
@@ -1270,6 +1279,7 @@ class LedWorker(QThread):
             except Exception:
                 log.debug("Ошибка остановки захвата", exc_info=True)
             self._capture = None
+        self._stop_extra_captures()
 
     async def _shutdown(self):
         log.info("Останавливаю фоновый поток")
@@ -1541,6 +1551,7 @@ class LedWorker(QThread):
                     active = max(1, int(self.wled.led_count) - offset)
                     pixels = self._with_led_offset([(r, g, b)] * active)
                     sent = self.wled.send_frame(pixels)
+                    self._send_extra_pixels(pixels)
                     self._note_frame(sent, (time.perf_counter() - started) * 1000.0)
                 finally:
                     self.wled.min_send_interval = old_interval
@@ -1769,6 +1780,148 @@ class LedWorker(QThread):
             self._adaptive_key = key
         return self._adaptive_sampler
 
+    def _reload_extra_wleds(self):
+        """Дополнительные WLED-устройства (multi-strip 2.0)."""
+        self._extra_config = copy.deepcopy(self.config.get("extra_wleds") or [])
+        old = getattr(self, "extra_wleds", [])
+        for item in old:
+            try:
+                item["controller"].disconnect()
+            except Exception:
+                pass
+            capture = item.get("capture")
+            if capture is not None:
+                try:
+                    capture.stop()
+                except Exception:
+                    pass
+        self.extra_wleds = []
+        for raw in self.config.get("extra_wleds") or []:
+            if not isinstance(raw, dict) or not raw.get("enabled", True):
+                continue
+            host = str(raw.get("host", "")).strip()
+            if not host:
+                continue
+            try:
+                port = int(raw.get("port", 21324))
+                count = max(1, min(MAX_DRGB_LEDS, int(raw.get("led_count", 90))))
+                offset = max(0, int(raw.get("offset", 0)))
+                monitor_index = max(0, int(raw.get("monitor_index", 0)))
+            except (TypeError, ValueError):
+                continue
+            self.extra_wleds.append({
+                "name": str(raw.get("name", host))[:40],
+                "controller": WLEDController(host, port, count),
+                "led_count": count,
+                "offset": offset,
+                "monitor_index": monitor_index,
+                "capture": None,
+                "mapper": None,
+                "connected": False,
+            })
+
+    def _ensure_extra_capture(self, item):
+        if item.get("capture") is not None:
+            return item["capture"]
+        monitor = int(item.get("monitor_index", 0))
+        try:
+            capture = ScreenCapture(
+                target_fps=max(10, int(self.config.get("target_fps", 60))),
+                backend=self.config.get("capture_backend", "dxgi"),
+                monitor_index=monitor,
+            )
+            capture.start()
+            frame = capture.get_frame()
+            if frame is None:
+                capture.stop()
+                return None
+            h, w = frame.shape[0], frame.shape[1]
+            mapper = StripMapper(int(item["led_count"]), w, h)
+            sw = max(1, int(self.strip_mapper.screen_width))
+            sh = max(1, int(self.strip_mapper.screen_height))
+            mapper.led_path = [
+                (x * w / sw, y * h / sh) for x, y in self.strip_mapper.led_path
+            ]
+            mapper.build_mapping(
+                strip_width=self.strip_mapper.last_strip_width,
+                exact_positions=self.strip_mapper.last_exact_positions,
+            )
+            item["capture"] = capture
+            item["mapper"] = mapper
+            log.info("Дополнительный монитор %s: %sx%s", monitor, w, h)
+            return capture
+        except Exception:
+            log.exception("Не удалось запустить захват монитора %s", monitor)
+            return None
+
+    def _extra_monitor_pixels(self, item):
+        capture = self._ensure_extra_capture(item)
+        if capture is None:
+            return None
+        frame = capture.get_frame()
+        if frame is None:
+            return None
+        mapper = item.get("mapper")
+        if mapper is None:
+            return None
+        pixels = mapper.get_all_leds_colors(
+            frame,
+            mode=self.config.get("led_sampling_mode", "average"),
+            clip_rect=None,
+            linear=self.config.get("filters", {}).get("linear_average", True),
+            bgra=bool(getattr(capture, "frame_bgra", False)),
+        )
+        composition = active_composition(self.config)
+        if composition is not None:
+            try:
+                pixels = self.scene_engine.render(
+                    composition,
+                    screen_pixels=np.asarray(pixels, dtype=np.float32),
+                    audio=self.audio.get_state(),
+                    palette=self.spotify_palette,
+                    led_count=len(pixels),
+                )
+            except Exception:
+                log.debug("Композиция для доп. монитора не собралась", exc_info=True)
+        return process_pixel_frame(pixels, self.config, apply_power=False)
+
+    def _stop_extra_captures(self):
+        for item in getattr(self, "extra_wleds", []):
+            capture = item.get("capture")
+            if capture is not None:
+                try:
+                    capture.stop()
+                except Exception:
+                    pass
+                item["capture"] = None
+                item["mapper"] = None
+
+    def _send_extra_pixels(self, pixels):
+        primary_monitor = int(self.config.get("monitor_index", 0) or 0)
+        for item in getattr(self, "extra_wleds", []):
+            try:
+                controller = item["controller"]
+                if not controller.is_connected:
+                    controller.connect()
+                    item["connected"] = controller.is_connected
+                count = int(item["led_count"])
+                offset = int(item["offset"])
+                if int(item.get("monitor_index", 0)) != primary_monitor:
+                    values = self._extra_monitor_pixels(item)
+                    if values is None:
+                        continue
+                else:
+                    values = list(pixels)
+                values = list(values)[:count]
+                if len(values) < count:
+                    values.extend([(0, 0, 0)] * (count - len(values)))
+                if offset:
+                    values = [(0, 0, 0)] * offset + values
+                controller.send_frame(values)
+            except Exception:
+                log.debug("Дополнительная WLED-лента %s недоступна", item.get("name"),
+                          exc_info=True)
+
     async def _send_pixel_frame(self, frame, clip, fallback_color,
                                 audio_active, audio_cfg, audio_mode, state,
                                 bgra=False):
@@ -1803,6 +1956,37 @@ class LedWorker(QThread):
                 bgra=bgra,
             )
         pixels = self._smooth_pixel_array(pixels)
+        # 2.0: если включена слоистая композиция — собираем кадр из слоёв.
+        composition = active_composition(self.config)
+        if composition is not None:
+            try:
+                pixels = self.scene_engine.render(
+                    composition,
+                    screen_pixels=np.asarray(pixels, dtype=np.float32),
+                    audio=self.audio.get_state(),
+                    palette=self.spotify_palette,
+                    led_count=len(pixels),
+                )
+            except Exception:
+                log.exception("Не удалось собрать композицию, остаётся базовый цвет")
+        else:
+            # Уведомление должно быть видно и без включённого композитора.
+            active_notes = self.notifications.active()
+            if active_notes:
+                try:
+                    from .effects import render_effect
+                    from .scene_engine import blend
+                    note = active_notes[-1]
+                    overlay = render_effect(
+                        "notification", len(pixels), time.monotonic(),
+                        {"color": note.color, "speed": 1.6},
+                    )
+                    pixels = blend(
+                        np.asarray(pixels, dtype=np.float32), overlay,
+                        "screen", 0.85,
+                    )
+                except Exception:
+                    log.debug("Не удалось наложить уведомление", exc_info=True)
         # Тот же цветовой пайплайн, что и для одиночного цвета (HSV, яркость,
         # калибровка, гамма) - раньше здесь уходил «сырой» цвет экрана.
         # Ограничение по току применяем в самом конце, после всех смешиваний.
@@ -1827,6 +2011,7 @@ class LedWorker(QThread):
         started = time.perf_counter()
         send_pixels = self._with_led_offset(pixels)
         sent = target.send_frame(send_pixels)
+        self._send_extra_pixels(send_pixels)
         latency = (time.perf_counter() - started) * 1000.0
         self._last_pixels = pixels
         self._current_ma = estimate_current_ma(send_pixels, self.config)
@@ -1970,6 +2155,7 @@ class LedWorker(QThread):
             started = time.perf_counter()
             send_pixels = self._with_led_offset(pixels)
             sent = target.send_frame(send_pixels)
+            self._send_extra_pixels(send_pixels)
             self._note_frame(sent, (time.perf_counter() - started) * 1000.0)
             self._current_ma = estimate_current_ma(send_pixels, self.config)
             self.strip_pixels_updated.emit(pixels)
