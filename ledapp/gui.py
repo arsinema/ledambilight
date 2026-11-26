@@ -27,7 +27,7 @@ from PyQt5.QtWidgets import (
     QLineEdit, QPlainTextEdit, QMessageBox, QGroupBox, QProgressBar,
     QApplication, QScrollArea, QSystemTrayIcon, QMenu, QAction, QDialog,
     QTimeEdit, QShortcut, QProgressDialog, QGridLayout,
-    QFrame,
+    QFrame, QTextBrowser,
 )
 
 from .config import APP_DIR, RESOURCE_DIR, load_config, save_config
@@ -42,6 +42,7 @@ from .composer_widget import ComposerWidget
 from .automation import AutomationEngine
 from .automation_widget import AutomationWidget
 from .integrations_widget import IntegrationsWidget
+from .user_guide import GUIDE_HTML, PAGE_HELP
 from . import autostart, i18n, updater, __version__
 
 log = logging.getLogger(__name__)
@@ -1462,11 +1463,37 @@ class MainWindow(QMainWindow):
         self.sidebar.currentRowChanged.connect(self._on_sidebar_changed)
         content_row.addWidget(self.sidebar)
 
+        content_col = QVBoxLayout()
+        content_col.setSpacing(8)
+        self.page_help = QFrame()
+        self.page_help.setObjectName("pageHelp")
+        help_layout = QHBoxLayout(self.page_help)
+        help_layout.setContentsMargins(12, 8, 12, 8)
+        help_icon = QLabel()
+        help_icon.setPixmap(self._icon("bulb").pixmap(20, 20))
+        help_layout.addWidget(help_icon)
+        help_text_col = QVBoxLayout()
+        help_text_col.setSpacing(1)
+        self.help_title = QLabel("")
+        self.help_title.setObjectName("pageHelpTitle")
+        help_text_col.addWidget(self.help_title)
+        self.help_text = QLabel("")
+        self.help_text.setObjectName("pageHelpText")
+        self.help_text.setWordWrap(True)
+        help_text_col.addWidget(self.help_text)
+        help_layout.addLayout(help_text_col, 1)
+        self.help_more = QPushButton("Руководство")
+        self.help_more.setObjectName("helpButton")
+        self.help_more.clicked.connect(lambda: self._navigate_page(16))
+        help_layout.addWidget(self.help_more)
+        content_col.addWidget(self.page_help)
+
         tabs = QTabWidget()
         tabs.setObjectName("mainPages")
         tabs.tabBar().hide()
         tabs.setDocumentMode(True)
-        content_row.addWidget(tabs, 1)
+        content_col.addWidget(tabs, 1)
+        content_row.addLayout(content_col, 1)
         root.addLayout(content_row, 1)
         self.tabs = tabs
 
@@ -1487,6 +1514,7 @@ class MainWindow(QMainWindow):
         tabs.addTab(self._wrap_scroll(self._build_wifi_setup_tab()), "Настройка WiFi (ESP)")
         tabs.addTab(self._wrap_scroll(self._build_profiles_tab()), "Профили")
         tabs.addTab(self._wrap_scroll(self._build_system_tab()), "Система")
+        tabs.addTab(self._build_guide_tab(), "Руководство")
         QTimer.singleShot(0, self._refresh_room_strip)
 
         tabs.currentChanged.connect(self._on_tab_changed)
@@ -1494,6 +1522,8 @@ class MainWindow(QMainWindow):
         self._populate_sidebar()
         # по умолчанию открыта «Главная», а не подключение
         self._navigate_page(0)
+        self._update_page_help(0)
+        self._refresh_dashboard()
         self.worker.set_preview_active(tabs.currentIndex() == preview_tab_index)
 
         # Нижняя строка: версия слева, явный «Выход» справа. Крестик окна
@@ -1553,6 +1583,7 @@ class MainWindow(QMainWindow):
             self.sidebar.blockSignals(False)
         if index == 0:
             self._refresh_dashboard()
+        self._update_page_help(index)
 
     def _build_standby_tab(self):
         from .now_playing import NowPlayingMonitor
@@ -1768,6 +1799,7 @@ class MainWindow(QMainWindow):
             ("Просмотр захвата", 2, "photo"),
             ("Дежурный режим", 12, "bulb"),
             ("Настройки", 15, "settings"),
+            ("Руководство", 16, "list"),
         ]
         for title, index, icon in specs:
             item = QListWidgetItem(title)
@@ -1782,6 +1814,10 @@ class MainWindow(QMainWindow):
                 item.setData(Qt.UserRole, index)
                 if icon:
                     item.setIcon(self._icon(icon))
+                tab_title = self.tabs.tabText(index) if index < self.tabs.count() else title
+                tab_help = PAGE_HELP.get(tab_title, (title, ""))[1]
+                if tab_help:
+                    item.setToolTip(tab_help)
             self.sidebar.addItem(item)
         self.sidebar.blockSignals(False)
 
@@ -1951,6 +1987,24 @@ class MainWindow(QMainWindow):
             widget._refresh_all()
         self._queue_save()
         self._refresh_dashboard()
+
+    def _build_guide_tab(self):
+        browser = QTextBrowser()
+        browser.setObjectName("guideBrowser")
+        browser.setOpenExternalLinks(True)
+        browser.setHtml(GUIDE_HTML)
+        return browser
+
+    def _update_page_help(self, index):
+        if not hasattr(self, "help_title"):
+            return
+        title = self.tabs.tabText(index) if 0 <= index < self.tabs.count() else ""
+        help_title, help_text = PAGE_HELP.get(
+            title, (title, "Выбери раздел в меню слева.")
+        )
+        self.help_title.setText(help_title)
+        self.help_text.setText(help_text)
+        self.help_more.setVisible(title != "Руководство")
 
     def _build_connection_tab(self):
         w = QWidget()

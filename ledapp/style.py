@@ -357,4 +357,34 @@ QScrollBar::handle:horizontal {
 }
 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0px; }
 
+/* --- подсказка страницы и руководство --- */
+QFrame#pageHelp {
+    background-color: #191b21;
+    border: 1px solid #2f323b;
+    border-radius: 9px;
+}
+QLabel#pageHelpTitle {
+    color: #dfe4f0;
+    font-size: 12px;
+    font-weight: 700;
+}
+QLabel#pageHelpText {
+    color: #8f96a5;
+    font-size: 11px;
+}
+QPushButton#helpButton {
+    padding: 5px 10px;
+    border-radius: 6px;
+    background: #242833;
+    border: 1px solid #3b4050;
+}
+QPushButton#helpButton:hover { background: #303645; }
+QTextBrowser#guideBrowser {
+    background-color: #1b1c21;
+    border: 1px solid #2f323b;
+    border-radius: 10px;
+    padding: 14px;
+    color: #e4e6ec;
+}
+
 """
