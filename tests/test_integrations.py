@@ -8,6 +8,7 @@ from PIL import Image
 from ledapp import secrets
 from ledapp.spotify_client import make_pkce, palette_from_image
 from ledapp.telegram_bot import TelegramBot
+from ledapp.telegram_desktop import parse_unread
 from ledapp.windows_notifications import HAS_WINSDK, WindowsNotificationMonitor
 
 
@@ -66,6 +67,12 @@ class WindowsNotificationTests(unittest.TestCase):
         if not HAS_WINSDK:
             self.assertFalse(monitor.start())
         self.assertFalse(monitor.running)
+
+    def test_telegram_title_parser(self):
+        self.assertEqual(parse_unread("Telegram (3)"), 3)
+        self.assertEqual(parse_unread("Telegram (12) — chats"), 12)
+        self.assertEqual(parse_unread("Telegram"), 0)
+        self.assertEqual(parse_unread("5 unread"), 5)
 
 
 if __name__ == "__main__":

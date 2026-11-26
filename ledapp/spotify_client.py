@@ -11,7 +11,6 @@ import secrets as random_secrets
 import threading
 import time
 import urllib.parse
-import urllib.request
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -40,23 +39,50 @@ def make_pkce():
 
 
 def palette_from_image(data, limit=6):
-    """Возвращает [(r,g,b), ...] — самые заметные цвета обложки."""
+    """Возвращает яркие цвета обложки, а не усреднённую серую кашу."""
     if not data:
         return []
     try:
+        import colorsys
+        import math
+
         from PIL import Image
 
         image = Image.open(io.BytesIO(data)).convert("RGB")
-        image = image.resize((64, 64))
-        quant = image.quantize(colors=max(2, min(10, limit)), method=Image.Quantize.MEDIANCUT)
+        image = image.resize((96, 96))
+        quant = image.quantize(colors=max(4, min(16, limit * 2)),
+                               method=Image.Quantize.MEDIANCUT)
         palette = quant.getpalette() or []
         counts = quant.getcolors() or []
+        candidates = []
+        fallback = []
+        for count, index in counts:
+            if index * 3 + 2 >= len(palette):
+                continue
+            r, g, b = palette[index * 3:index * 3 + 3]
+            h, s, v = colorsys.rgb_to_hsv(r / 255.0, g / 255.0, b / 255.0)
+            fallback.append((count, r, g, b, s, v))
+            if v < 0.10 or s < 0.08:
+                continue
+            # насыщенность важнее площади, но совсем маленькие пятна не берём
+            score = (s ** 1.2) * (0.45 + 0.55 * v) * math.sqrt(max(1, count))
+            s2 = min(1.0, s * 1.35 + 0.12)
+            v2 = min(1.0, v * 1.15 + 0.06)
+            r2, g2, b2 = colorsys.hsv_to_rgb(h, s2, v2)
+            candidates.append((score, int(r2 * 255), int(g2 * 255), int(b2 * 255)))
+        if not candidates:
+            # Обложка действительно серая/тёмная — чуть поднимаем яркость,
+            # чтобы лента не была почти чёрной.
+            for count, r, g, b, s, v in sorted(fallback, reverse=True)[:limit]:
+                scale = max(1.0, 0.24 / max(0.06, v))
+                candidates.append((count, min(255, int(r * scale)),
+                                   min(255, int(g * scale)), min(255, int(b * scale))))
+        candidates.sort(key=lambda item: item[0], reverse=True)
         result = []
-        for count, index in sorted(counts, reverse=True)[:limit]:
-            r = palette[index * 3] if index * 3 < len(palette) else 0
-            g = palette[index * 3 + 1] if index * 3 + 1 < len(palette) else 0
-            b = palette[index * 3 + 2] if index * 3 + 2 < len(palette) else 0
-            result.append((int(r), int(g), int(b)))
+        for _, r, g, b in candidates[:limit]:
+            color = (r, g, b)
+            if color not in result:
+                result.append(color)
         return result or [(40, 80, 160)]
     except Exception:
         return []
@@ -179,14 +205,11 @@ class SpotifyClient:
         return self._exchange_code(self._callback_code, verifier)
 
     def _post_token(self, payload):
-        data = urllib.parse.urlencode(payload).encode("utf-8")
-        request = urllib.request.Request(
-            TOKEN_URL, data=data,
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-            method="POST",
-        )
-        with urllib.request.urlopen(request, timeout=15) as response:
-            result = json.loads(response.read().decode("utf-8"))
+        import requests
+
+        response = requests.post(TOKEN_URL, data=payload, timeout=15)
+        response.raise_for_status()
+        result = response.json()
         if "access_token" not in result:
             raise RuntimeError(result.get("error_description") or "Spotify token error")
         result["expires_at"] = time.time() + int(result.get("expires_in", 3600))
@@ -230,21 +253,32 @@ class SpotifyClient:
             return ""
 
     def _api(self, method, path, params=None, timeout=15):
+        import requests
+
         token = self._access_token()
         if not token:
             raise RuntimeError("Spotify не авторизован")
         url = API + path
-        if params:
-            url += "?" + urllib.parse.urlencode(params)
         headers = {"Authorization": f"Bearer {token}"}
-        data = None
-        if method in ("PUT", "POST"):
-            data = b""
-            headers["Content-Length"] = "0"
-        request = urllib.request.Request(url, data=data, headers=headers, method=method)
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            body = response.read().decode("utf-8", errors="replace")
-        return json.loads(body) if body else {}
+        response = requests.request(
+            method, url, params=params, headers=headers, timeout=timeout
+        )
+        if response.status_code >= 400:
+            detail = response.text[:240]
+            try:
+                body = response.json()
+                detail = (body.get("error") or {}).get("message") or detail
+            except Exception:
+                pass
+            raise RuntimeError(f"Spotify {response.status_code}: {detail}")
+        # 204 — нормальный ответ play/pause/next; некоторые команды Spotify
+        # отвечают 200 с текстовым id трека, а не JSON.
+        if response.status_code == 204 or not response.content:
+            return {}
+        try:
+            return response.json()
+        except ValueError:
+            return {}
 
     # ------------------------------------------------------------------
 
@@ -331,8 +365,11 @@ class SpotifyClient:
 
     def _download(self, url):
         try:
-            with urllib.request.urlopen(url, timeout=15) as response:
-                return response.read(2 * 1024 * 1024)
+            import requests
+
+            response = requests.get(url, timeout=15)
+            response.raise_for_status()
+            return response.content[: 2 * 1024 * 1024]
         except Exception:
             return b""
 
@@ -358,6 +395,10 @@ class SpotifyClient:
         return self._control("POST", "/me/player/previous")
 
     def _control(self, method, path):
+        if path.endswith("/play") and self.current.get("playing"):
+            return True
+        if path.endswith("/pause") and self.current and not self.current.get("playing"):
+            return True
         try:
             self._api(method, path)
             self.poll()

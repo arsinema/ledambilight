@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import queue
 import threading
 import time
-import urllib.parse
-import urllib.request
 
 from . import secrets
 
@@ -88,15 +85,13 @@ class TelegramBot:
     # ------------------------------------------------------------------
 
     def _api(self, method, payload=None, timeout=35):
+        import requests
+
         url = API.format(token=self.token, method=method)
-        data = None
-        headers = {"Content-Type": "application/json"}
-        if payload is not None:
-            data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        request = urllib.request.Request(url, data=data, headers=headers, method="POST")
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            body = response.read().decode("utf-8", errors="replace")
-        result = json.loads(body)
+        response = requests.post(url, json=payload if payload is not None else {},
+                                 timeout=timeout)
+        response.raise_for_status()
+        result = response.json()
         if not result.get("ok"):
             raise RuntimeError(result.get("description") or "Telegram API error")
         return result.get("result")

@@ -964,6 +964,7 @@ class MainWindow(QMainWindow):
         self._current_window_title = ""
         self._mqtt = None
         self.spotify_client = None
+        self._last_spotify_track = {}
         self.telegram_bot = None
         self.windows_notifications = None
         self._start_remote()
@@ -2637,8 +2638,12 @@ class MainWindow(QMainWindow):
 
     def _on_spotify_track(self, track):
         client = self.spotify_client
+        self._last_spotify_track = dict(track or {})
         if client is not None:
             self.worker.spotify_palette = client.palette or None
+            log.info("Spotify track: %s — %s, palette %s",
+                     track.get("artists", ""), track.get("name", ""),
+                     client.palette)
         if track:
             self.status_label.setText(
                 f"Spotify: {track.get('artists')} — {track.get('name')}"
@@ -2782,9 +2787,28 @@ class MainWindow(QMainWindow):
                 self.windows_notifications = monitor
                 self.integrations_widget.set_windows_status("Ожидаю уведомления")
             else:
-                self.integrations_widget.set_windows_status(
-                    monitor.last_error or "winsdk не установлен"
+                # winsdk часто недоступен под Python 3.14 — читаем только
+                # число непрочитанных в заголовке Telegram Desktop.
+                from .telegram_desktop import TelegramDesktopMonitor
+                fallback = TelegramDesktopMonitor(
+                    on_notification=lambda item: self.windows_notification_received.emit(
+                        dict(item or {})
+                    ),
+                    on_status=lambda state, message: self.integrations_widget.set_windows_status(
+                        "Telegram Desktop: слежу за заголовком"
+                        if state == "connected" else f"{state}: {message}"
+                    ),
                 )
+                if fallback.start():
+                    self.windows_notifications = fallback
+                    self.integrations_widget.set_windows_status(
+                        "Telegram Desktop: слежу за заголовком"
+                    )
+                else:
+                    self.integrations_widget.set_windows_status(
+                        monitor.last_error or fallback.last_error
+                        or "уведомления недоступны"
+                    )
         except Exception as exc:
             self.integrations_widget.set_windows_status(f"Ошибка: {exc}")
 
@@ -5753,6 +5777,10 @@ class MainWindow(QMainWindow):
                     "compositions", []
                 ) if isinstance(item, dict)
             ],
+            "spotify": {
+                "track": self.__dict__.get("_last_spotify_track", {}),
+                "palette": self.worker.spotify_palette,
+            },
         }
         if self._mqtt is not None:
             self._mqtt.publish_state()

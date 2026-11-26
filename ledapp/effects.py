@@ -54,6 +54,10 @@ def _n(value, default, low=0.0, high=10.0):
 
 
 def _gradient(n, colors, offset=0.0):
+    colors = np.asarray(colors, dtype=np.float32)
+    if colors.ndim != 2 or colors.shape[1] < 3:
+        colors = np.array([[30, 80, 255], [255, 40, 180]], dtype=np.float32)
+    colors = colors[:, :3]
     if len(colors) == 1:
         return np.repeat(colors[:1], n, axis=0)
     positions = np.linspace(0.0, 1.0, n, dtype=np.float32) + offset

@@ -84,6 +84,25 @@ class EffectTests(unittest.TestCase):
         out = render_effect("audio_bars", 16, 0, {}, audio)
         self.assertGreater(float(out[8:].mean()), float(out[:8].mean()))
 
+    def test_spotify_palette_accepts_list(self):
+        out = render_effect("spotify_palette", 8, 0, {}, None,
+                            palette=[(200, 30, 40), (20, 80, 220)])
+        self.assertGreater(float(out.max()), 10)
+
+    def test_audio_layer_does_not_black_out_spotify(self):
+        comp = Composition.from_dict({
+            "id": "music", "layers": [
+                {"type": "spotify", "effect": "spotify_palette"},
+                {"type": "audio", "effect": "audio_bars"},
+            ],
+        })
+        self.assertEqual(comp.layers[1].blend, "add")
+        out = SceneRenderer().render(
+            comp, audio=None, led_count=8,
+            palette=[(200, 30, 40), (20, 80, 220)],
+        )
+        self.assertGreater(float(out.max()), 10)
+
     def test_unknown_effect_falls_back(self):
         out = render_effect("nope", 4, 0, {}, None)
         self.assertEqual(out.shape, (4, 3))

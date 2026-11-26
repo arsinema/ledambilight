@@ -113,7 +113,7 @@ class IntegrationsWidget(QWidget):
         self.windows_enabled.stateChanged.connect(self._on_windows)
         wf.addRow(self.windows_enabled)
         self.windows_status = QLabel(
-            "Нужен пакет winsdk и разрешение Windows"
+            "winsdk для любых приложений или Telegram Desktop по заголовку"
         )
         wf.addRow("Статус", self.windows_status)
         test_windows = QPushButton("Тестовая вспышка")

@@ -115,6 +115,10 @@ class Composition:
             else:
                 item = Layer.from_dict(layer)
             item.z = item.z if item.z else index
+            # Звуковой слой — это добавка к базе, а не замена: в тишине
+            # audio_bars возвращает чёрный и при normal полностью гасил Spotify.
+            if item.type == "audio" and item.blend == "normal":
+                item.blend = "add"
             clean.append(item)
         self.layers = clean
         self.background = _color(self.background, (0, 0, 0))

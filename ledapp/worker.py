@@ -1646,9 +1646,9 @@ class LedWorker(QThread):
         audio_active = self.audio.is_running and audio_cfg.get("enabled", False)
         visualizer_owns_strip = audio_active and audio_mode in ("visualizer", "spectrum")
 
-        # В режиме «визуализатор» лентой управляет _audio_tick: считать зоны
-        # экрана и гонять цветовой пайплайн незачем
-        if visualizer_owns_strip:
+        # В режиме «визуализатор» лентой обычно управляет _audio_tick, но
+        # если включён композитор — кадр собирает Scene Composer.
+        if visualizer_owns_strip and active_composition(self.config) is None:
             return self._profile_delay(profile)
 
         # --- область анализа: пользовательская HUD-маска + чёрные полосы ---
@@ -2054,6 +2054,10 @@ class LedWorker(QThread):
             self.beat_update.emit(float(getattr(state, "bpm", 0.0)))
 
         mode = audio_cfg.get("mode", "hybrid")
+        if active_composition(self.config) is not None and self.capture_enabled:
+            # Слоистую композицию собирает _screen_tick; не перекрываем её
+            # одиночным цветом визуализатора.
+            return None
         if mode == "visualizer":
             color = self._compute_visualizer_color(state, audio_cfg)
             self.color_updated.emit(*color)
