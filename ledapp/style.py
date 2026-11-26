@@ -246,4 +246,115 @@ QLabel#statusHeader {
     font-weight: 600;
     padding: 4px 2px;
 }
+/* --- 2.0: боковая навигация и дашборд --- */
+QListWidget#sidebar {
+    background-color: #17181c;
+    border: 1px solid #2b2d33;
+    border-radius: 10px;
+    padding: 6px 4px;
+    outline: none;
+}
+QListWidget#sidebar::item {
+    color: #c8cad2;
+    border-radius: 7px;
+    padding: 7px 8px;
+    margin: 1px 3px;
+}
+QListWidget#sidebar::item:hover {
+    background-color: #262931;
+    color: #ffffff;
+}
+QListWidget#sidebar::item:selected {
+    background-color: #2b6fd6;
+    color: #ffffff;
+}
+QListWidget#sidebar::item:disabled {
+    color: #666a74;
+    background: transparent;
+}
+QTabWidget#mainPages::pane {
+    border: none;
+    background: transparent;
+}
+QTabWidget#mainPages QTabBar::tab {
+    height: 0px;
+    width: 0px;
+    padding: 0px;
+    margin: 0px;
+}
+QFrame#dashboardHero {
+    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+        stop:0 #1d2a44, stop:0.55 #242238, stop:1 #1a1c22);
+    border: 1px solid #3b4050;
+    border-radius: 14px;
+}
+QLabel#dashboardTitle {
+    color: #ffffff;
+    font-size: 25px;
+    font-weight: 700;
+}
+QLabel#dashboardSubtitle {
+    color: #b9c2d4;
+    font-size: 12px;
+}
+QLabel#dashboardStatus {
+    color: #ffb86b;
+    font-size: 12px;
+    font-weight: 600;
+}
+QLabel#dashboardStatus[live="true"] {
+    color: #62e08a;
+}
+QFrame#dashboardImage {
+    border-radius: 10px;
+    border: 1px solid #3b4050;
+    background: #0b0c0f;
+}
+QFrame#dashboardCard {
+    background-color: #1b1c21;
+    border: 1px solid #2f323a;
+    border-radius: 10px;
+}
+QLabel#dashboardCardTitle {
+    color: #7f8797;
+    font-size: 9px;
+    font-weight: 700;
+}
+QLabel#dashboardCardValue {
+    color: #f0f2f7;
+    font-size: 12px;
+    font-weight: 600;
+}
+QPushButton[active="true"] {
+    border-color: #2b6fd6;
+    background-color: #243558;
+}
+
+/* --- аккуратные скроллбары --- */
+QScrollBar:vertical {
+    background: #17181c;
+    width: 9px;
+    margin: 2px 1px;
+    border-radius: 4px;
+}
+QScrollBar::handle:vertical {
+    background: #3d4350;
+    min-height: 24px;
+    border-radius: 4px;
+}
+QScrollBar::handle:vertical:hover { background: #505868; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
+QScrollBar:horizontal {
+    background: #17181c;
+    height: 9px;
+    margin: 1px 2px;
+    border-radius: 4px;
+}
+QScrollBar::handle:horizontal {
+    background: #3d4350;
+    min-width: 24px;
+    border-radius: 4px;
+}
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0px; }
+
 """

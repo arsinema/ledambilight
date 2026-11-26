@@ -15,7 +15,7 @@ import tempfile
 import threading
 import time
 
-from PyQt5.QtCore import Qt, QTimer, QRectF, QTime, QUrl, pyqtSignal
+from PyQt5.QtCore import Qt, QTimer, QRectF, QTime, QUrl, pyqtSignal, QSize
 from PyQt5.QtGui import (
     QImage, QPixmap, QPainter, QColor, QPen, QIcon, QKeySequence,
     QDesktopServices, QPixmapCache,
@@ -26,10 +26,11 @@ from PyQt5.QtWidgets import (
     QSlider, QCheckBox, QComboBox, QDoubleSpinBox, QSpinBox,
     QLineEdit, QPlainTextEdit, QMessageBox, QGroupBox, QProgressBar,
     QApplication, QScrollArea, QSystemTrayIcon, QMenu, QAction, QDialog,
-    QTimeEdit, QShortcut, QProgressDialog
+    QTimeEdit, QShortcut, QProgressDialog, QGridLayout,
+    QFrame,
 )
 
-from .config import APP_DIR, load_config, save_config
+from .config import APP_DIR, RESOURCE_DIR, load_config, save_config
 from .worker import LedWorker
 from .audio_engine import list_input_devices, list_output_devices, is_available as audio_is_available
 from .updates import check_for_update
@@ -843,8 +844,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("LED Ambilight")
-        self.resize(780, 640)
-        self.setMinimumSize(480, 360)  # разумный минимум - меньше уже неюзабельно,
+        self.resize(1180, 780)
+        self.setMinimumSize(760, 520)  # разумный минимум - меньше уже неюзабельно,
                                         # но при этом окно свободно уменьшается/растягивается
 
         self.config = load_config()
@@ -1452,10 +1453,24 @@ class MainWindow(QMainWindow):
         self._mini_preview_mode = "flat"
         self._last_pixels_update_time = 0.0
 
+        content_row = QHBoxLayout()
+        content_row.setSpacing(10)
+        self.sidebar = QListWidget()
+        self.sidebar.setObjectName("sidebar")
+        self.sidebar.setFixedWidth(214)
+        self.sidebar.setIconSize(QSize(18, 18))
+        self.sidebar.currentRowChanged.connect(self._on_sidebar_changed)
+        content_row.addWidget(self.sidebar)
+
         tabs = QTabWidget()
-        root.addWidget(tabs)
+        tabs.setObjectName("mainPages")
+        tabs.tabBar().hide()
+        tabs.setDocumentMode(True)
+        content_row.addWidget(tabs, 1)
+        root.addLayout(content_row, 1)
         self.tabs = tabs
 
+        tabs.addTab(self._build_dashboard(), "Главная")
         tabs.addTab(self._wrap_scroll(self._build_connection_tab()), "Подключение")
         preview_tab_index = tabs.addTab(self._wrap_scroll(self._build_preview_tab()), "Просмотр захвата")
         tabs.addTab(self._build_room_tab(), "Комната")
@@ -1476,8 +1491,9 @@ class MainWindow(QMainWindow):
 
         tabs.currentChanged.connect(self._on_tab_changed)
         self._preview_tab_index = preview_tab_index
-        # по умолчанию открыта вкладка "Подключение" (индекс 0) — превью не активно,
-        # пока пользователь сам не откроет вкладку "Просмотр захвата"
+        self._populate_sidebar()
+        # по умолчанию открыта «Главная», а не подключение
+        self._navigate_page(0)
         self.worker.set_preview_active(tabs.currentIndex() == preview_tab_index)
 
         # Нижняя строка: версия слева, явный «Выход» справа. Крестик окна
@@ -1527,6 +1543,16 @@ class MainWindow(QMainWindow):
         self.worker.set_preview_active(
             index == getattr(self, "_preview_tab_index", -1)
         )
+        if hasattr(self, "sidebar"):
+            self.sidebar.blockSignals(True)
+            for row in range(self.sidebar.count()):
+                item = self.sidebar.item(row)
+                if item is not None and item.data(Qt.UserRole) == index:
+                    self.sidebar.setCurrentRow(row)
+                    break
+            self.sidebar.blockSignals(False)
+        if index == 0:
+            self._refresh_dashboard()
 
     def _build_standby_tab(self):
         from .now_playing import NowPlayingMonitor
@@ -1712,6 +1738,219 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Браузер", f"Не удалось открыть {url.toString()}")
 
     # -- Вкладка подключения --
+
+    def _icon(self, name):
+        path = os.path.join(RESOURCE_DIR, "assets", "icons", f"{name}.svg")
+        return QIcon(path) if os.path.exists(path) else QIcon()
+
+    def _populate_sidebar(self):
+        self.sidebar.blockSignals(True)
+        self.sidebar.clear()
+        specs = [
+            ("ОБЗОР", None, None),
+            ("Главная", 0, "home"),
+            ("СВЕТ", None, None),
+            ("Подключение", 1, "plug"),
+            ("Композитор", 6, "stack-2"),
+            ("Фильтры", 9, "palette"),
+            ("Звук", 10, "music"),
+            ("Комната", 3, "cube"),
+            ("УПРАВЛЕНИЕ", None, None),
+            ("Автоматизация", 7, "workflow"),
+            ("Интеграции", 8, "cloud"),
+            ("Профили / игры", 14, "device-gamepad-2"),
+            ("Зоны / HUD", 5, "list"),
+            ("ОБОРУДОВАНИЕ", None, None),
+            ("Конфигурация ленты", 11, "box"),
+            ("Калибровка", 4, "ruler"),
+            ("WiFi (ESP)", 13, "screen-share"),
+            ("СИСТЕМА", None, None),
+            ("Просмотр захвата", 2, "photo"),
+            ("Дежурный режим", 12, "bulb"),
+            ("Настройки", 15, "settings"),
+        ]
+        for title, index, icon in specs:
+            item = QListWidgetItem(title)
+            if index is None:
+                item.setFlags(Qt.NoItemFlags)
+                font = item.font()
+                font.setBold(True)
+                font.setPointSize(max(8, font.pointSize() - 1))
+                item.setFont(font)
+                item.setForeground(QColor("#6f7480"))
+            else:
+                item.setData(Qt.UserRole, index)
+                if icon:
+                    item.setIcon(self._icon(icon))
+            self.sidebar.addItem(item)
+        self.sidebar.blockSignals(False)
+
+    def _on_sidebar_changed(self, row):
+        item = self.sidebar.item(row)
+        if item is None:
+            return
+        index = item.data(Qt.UserRole)
+        if index is None:
+            return
+        if self.tabs.currentIndex() != int(index):
+            self.tabs.setCurrentIndex(int(index))
+
+    def _navigate_page(self, index):
+        if 0 <= index < self.tabs.count():
+            self.tabs.setCurrentIndex(index)
+
+    def _build_dashboard(self):
+        w = QWidget()
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(4, 2, 4, 4)
+        layout.setSpacing(12)
+
+        hero = QFrame()
+        hero.setObjectName("dashboardHero")
+        hero_layout = QHBoxLayout(hero)
+        hero_layout.setContentsMargins(20, 18, 20, 18)
+        hero_text = QVBoxLayout()
+        title = QLabel("LED Ambilight 2.0")
+        title.setObjectName("dashboardTitle")
+        hero_text.addWidget(title)
+        subtitle = QLabel("Экран, звук, Spotify и уведомления — в одной живой композиции.")
+        subtitle.setObjectName("dashboardSubtitle")
+        subtitle.setWordWrap(True)
+        hero_text.addWidget(subtitle)
+        self.dash_status = QLabel("Не подключено")
+        self.dash_status.setObjectName("dashboardStatus")
+        hero_text.addWidget(self.dash_status)
+        buttons = QHBoxLayout()
+        self.dash_toggle = QPushButton("▶ Запустить подсветку")
+        self.dash_toggle.setObjectName("primaryAction")
+        self.dash_toggle.setIcon(self._icon("player-play"))
+        self.dash_toggle.clicked.connect(self._on_tray_toggle_capture)
+        buttons.addWidget(self.dash_toggle)
+        blackout = QPushButton("Погасить")
+        blackout.setIcon(self._icon("power"))
+        blackout.clicked.connect(self.worker.blackout)
+        buttons.addWidget(blackout)
+        room = QPushButton("Комната")
+        room.setIcon(self._icon("cube"))
+        room.clicked.connect(lambda: self._navigate_page(3))
+        buttons.addWidget(room)
+        buttons.addStretch()
+        hero_text.addLayout(buttons)
+        hero_layout.addLayout(hero_text, 3)
+
+        image = QLabel()
+        image.setObjectName("dashboardImage")
+        image.setFixedSize(228, 132)
+        image.setScaledContents(True)
+        room_path = os.path.join(RESOURCE_DIR, "assets", "room", "room_2.jpg")
+        pixmap = QPixmap(room_path)
+        if not pixmap.isNull():
+            image.setPixmap(pixmap.scaled(228, 132, Qt.KeepAspectRatioByExpanding,
+                                          Qt.SmoothTransformation))
+        hero_layout.addWidget(image, 0)
+        layout.addWidget(hero)
+
+        cards = QGridLayout()
+        cards.setHorizontalSpacing(10)
+        cards.setVerticalSpacing(8)
+        self.dash_device = self._dashboard_card(cards, 0, 0, "Устройство", "—")
+        self.dash_profile = self._dashboard_card(cards, 0, 1, "Профиль", "—")
+        self.dash_composition = self._dashboard_card(cards, 1, 0, "Композиция", "—")
+        self.dash_spotify = self._dashboard_card(cards, 1, 1, "Spotify", "—")
+        layout.addLayout(cards)
+
+        quick = QGroupBox("Быстрые сцены")
+        quick_row = QHBoxLayout(quick)
+        for name in ("Кино", "Игра", "Ночь", "Яркий день"):
+            button = QPushButton(name)
+            button.clicked.connect(lambda _=False, n=name: self._apply_scene(n))
+            quick_row.addWidget(button)
+        quick_row.addStretch()
+        layout.addWidget(quick)
+
+        comps = QGroupBox("Композиции")
+        comp_row = QHBoxLayout(comps)
+        self.dash_comp_buttons = {}
+        for item in (self.config.get("scene_composer", {}).get("compositions") or []):
+            if not isinstance(item, dict):
+                continue
+            button = QPushButton(item.get("name", item.get("id", "")))
+            button.clicked.connect(
+                lambda _=False, cid=item.get("id", ""): self._activate_composition(cid)
+            )
+            comp_row.addWidget(button)
+            self.dash_comp_buttons[item.get("id", "")] = button
+        comp_row.addStretch()
+        layout.addWidget(comps)
+        layout.addStretch()
+        scroll = self._wrap_scroll(w)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        return scroll
+
+    def _dashboard_card(self, grid, row, column, title, value):
+        card = QFrame()
+        card.setObjectName("dashboardCard")
+        box = QVBoxLayout(card)
+        box.setContentsMargins(12, 10, 12, 10)
+        label = QLabel(title.upper())
+        label.setObjectName("dashboardCardTitle")
+        box.addWidget(label)
+        value_label = QLabel(value)
+        value_label.setObjectName("dashboardCardValue")
+        value_label.setWordWrap(True)
+        box.addWidget(value_label)
+        grid.addWidget(card, row, column)
+        return value_label
+
+    def _refresh_dashboard(self):
+        if not hasattr(self, "dash_status"):
+            return
+        capturing = bool(getattr(self, "_capture_running", False))
+        self.dash_status.setText(
+            "● Захват запущен — лента живая" if capturing
+            else "○ Захват выключен — нажми «Запустить подсветку»"
+        )
+        self.dash_status.setProperty("live", capturing)
+        self.dash_status.style().unpolish(self.dash_status)
+        self.dash_status.style().polish(self.dash_status)
+        self.dash_toggle.setText(
+            "■ Остановить подсветку" if capturing else "▶ Запустить подсветку"
+        )
+        self.dash_device.setText(self.device_mode_label.text())
+        self.dash_profile.setText(self.profile_label.text())
+        active = (self.config.get("scene_composer") or {}).get("active", "")
+        title = active
+        for item in (self.config.get("scene_composer") or {}).get("compositions", []):
+            if isinstance(item, dict) and item.get("id") == active:
+                title = item.get("name", active)
+                break
+        self.dash_composition.setText(title or "—")
+        track = self.__dict__.get("_last_spotify_track") or {}
+        self.dash_spotify.setText(
+            f"{track.get('artists', '')} — {track.get('name', '')}"
+            if track else "Не играет"
+        )
+        for composition_id, button in getattr(self, "dash_comp_buttons", {}).items():
+            button.setProperty("active", composition_id == active)
+            button.style().unpolish(button)
+            button.style().polish(button)
+
+    def _activate_composition(self, composition_id):
+        section = self.config.setdefault("scene_composer", {})
+        valid = {
+            item.get("id") for item in section.get("compositions", [])
+            if isinstance(item, dict)
+        }
+        if composition_id not in valid:
+            return
+        section["enabled"] = True
+        section["active"] = composition_id
+        self.worker.update_config(self.config)
+        widget = self.__dict__.get("composer_widget")
+        if widget is not None:
+            widget._refresh_all()
+        self._queue_save()
+        self._refresh_dashboard()
 
     def _build_connection_tab(self):
         w = QWidget()
@@ -2645,9 +2884,10 @@ class MainWindow(QMainWindow):
                      track.get("artists", ""), track.get("name", ""),
                      client.palette)
         if track:
-            self.status_label.setText(
-                f"Spotify: {track.get('artists')} — {track.get('name')}"
-            )
+            label = f"Spotify: {track.get('artists')} — {track.get('name')}"
+            if len(label) > 58:
+                label = label[:57].rstrip() + "…"
+            self.status_label.setText(label)
             self._automation_handle("spotify", {
                 "event": "track", "track": track.get("name", ""),
                 "playing": bool(track.get("playing")),
@@ -5784,6 +6024,7 @@ class MainWindow(QMainWindow):
         }
         if self._mqtt is not None:
             self._mqtt.publish_state()
+        self._refresh_dashboard()
 
     def _set_audio_from_remote(self, enabled, mode):
         self.config["audio"]["enabled"] = bool(enabled)
