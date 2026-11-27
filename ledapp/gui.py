@@ -43,7 +43,7 @@ from .composer_widget import ComposerWidget
 from .automation import AutomationEngine
 from .automation_widget import AutomationWidget
 from .integrations_widget import IntegrationsWidget
-from .user_guide import GUIDE_HTML, PAGE_HELP
+from .user_guide import PAGE_HELP, guide_html
 from .style import build_stylesheet
 from . import autostart, i18n, updater, __version__
 
@@ -1823,6 +1823,7 @@ class MainWindow(QMainWindow):
         self._ui_theme = (self.config.get("ui") or {}).get("theme", "light")
         self._ui_accent = (self.config.get("ui") or {}).get("accent", "#2b6fd6")
         app.setStyleSheet(build_stylesheet(self._ui_theme, self._ui_accent))
+        self._refresh_guide()
 
     def _on_ui_theme_changed(self, theme):
         if theme != "light":
@@ -2162,8 +2163,16 @@ class MainWindow(QMainWindow):
         browser = QTextBrowser()
         browser.setObjectName("guideBrowser")
         browser.setOpenExternalLinks(True)
-        browser.setHtml(GUIDE_HTML)
+        self.guide_browser = browser
+        self._refresh_guide()
         return browser
+
+    def _refresh_guide(self):
+        browser = getattr(self, "guide_browser", None)
+        if browser is None:
+            return
+        color = "#1f2430" if self._ui_theme == "light" else "#e4e6ec"
+        browser.setHtml(guide_html(color))
 
     def _update_page_help(self, index):
         if not hasattr(self, "help_title"):

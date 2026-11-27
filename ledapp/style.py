@@ -425,6 +425,8 @@ THEME_TINTS = {
 
 
 LIGHT_MAP = [
+    ("#262931", "#e7edf8"),
+    ("#4a4c54", "#b8c2d0"),
     ("#1e1f22", "#f3f5fa"),
     ("#232428", "#ffffff"),
     ("#26272b", "#ffffff"),
@@ -458,7 +460,6 @@ LIGHT_MAP = [
     ("#f0f2f7", "#1f2430"),
     ("#b9c2d4", "#536172"),
     ("#7f8797", "#6b7280"),
-    ("#ffffff", "#1f2430"),
 ]
 
 LIGHT_OVERRIDES = """
@@ -480,7 +481,7 @@ QPushButton#dangerAction { color: #8f2f2f; }
 QPushButton#exitAction { color: #a13a3a; }
 QListWidget::item:selected { color: #ffffff; }
 QListWidget#sidebar::item:selected { color: #ffffff; background-color: #2b6fd6; }
-QListWidget#sidebar::item:hover { color: #1f2430; }
+QListWidget#sidebar::item:hover { color: #1f2430; background-color: #e7edf8; }
 QTabBar::tab:selected { color: #ffffff; }
 QLabel#dashboardCardTitle { color: #6b7280; }
 QLabel#dashboardCardValue { color: #1f2430; }
