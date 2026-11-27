@@ -1959,8 +1959,13 @@ class MainWindow(QMainWindow):
 
         quick = QGroupBox("Быстрые сцены")
         quick_row = QHBoxLayout(quick)
+        scene_icons = {
+            "Кино": "movie", "Игра": "device-gamepad-2",
+            "Ночь": "moon", "Яркий день": "sun",
+        }
         for name in ("Кино", "Игра", "Ночь", "Яркий день"):
             button = QPushButton(name)
+            button.setIcon(self._icon(scene_icons.get(name, "bulb")))
             button.clicked.connect(lambda _=False, n=name: self._apply_scene(n))
             quick_row.addWidget(button)
         quick_row.addStretch()
@@ -1973,6 +1978,7 @@ class MainWindow(QMainWindow):
             if not isinstance(item, dict):
                 continue
             button = QPushButton(item.get("name", item.get("id", "")))
+            button.setIcon(self._icon("stack-2"))
             button.clicked.connect(
                 lambda _=False, cid=item.get("id", ""): self._activate_composition(cid)
             )
