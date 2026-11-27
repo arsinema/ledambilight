@@ -2128,6 +2128,11 @@ class MainWindow(QMainWindow):
         for index, swatch in enumerate(getattr(self, "dash_palette_labels", [])):
             if palette:
                 color = palette[index % len(palette)]
+                if isinstance(color, str):
+                    try:
+                        color = [int(part) for part in color.strip("[]").split()[:3]]
+                    except Exception:
+                        color = None
                 if isinstance(color, (list, tuple)) and len(color) >= 3:
                     swatch.setStyleSheet(
                         "background: rgb(%d,%d,%d); border-radius:3px;"
@@ -3112,10 +3117,18 @@ class MainWindow(QMainWindow):
         client = self.spotify_client
         self._last_spotify_track = dict(track or {})
         if client is not None:
-            self.worker.spotify_palette = client.palette or None
+            raw_palette = client.palette or []
+            palette = []
+            for color in raw_palette:
+                try:
+                    r, g, b = (int(channel) for channel in color[:3])
+                    palette.append((r, g, b))
+                except Exception:
+                    continue
+            self.worker.spotify_palette = palette or None
             log.info("Spotify track: %s — %s, palette %s",
                      track.get("artists", ""), track.get("name", ""),
-                     client.palette)
+                     palette)
         if track:
             label = f"Spotify: {track.get('artists')} — {track.get('name')}"
             if len(label) > 58:
