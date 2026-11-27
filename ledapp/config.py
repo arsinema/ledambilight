@@ -69,6 +69,10 @@ DEFAULT_CONFIG = {
     "capture_region": None,      # [left, top, width, height] или None = весь экран
     "monitor_index": 0,          # индекс монитора DXGI (0 = основной)
     "language": "ru",            # "ru" или "en"
+    "ui": {
+        "theme": "midnight",     # midnight | ocean | plum | forest
+        "accent": "#2b6fd6",     # акцентный цвет интерфейса
+    },
     "last_scene": "",            # последний выбранный пресет сцены
 
     "minimize_to_tray": True,     # закрытие окна сворачивает в трей вместо выхода
@@ -439,7 +443,7 @@ _DICT_SECTIONS = (
     "filters", "audio", "process_profile_map",
     "adaptive_fps", "power", "auto_pause", "hotkeys", "content", "remote",
     "lamp", "schedule", "sunrise", "app_scenes", "app_title_scenes", "mqtt", "updates",
-    "game_mode", "scene_composer", "automation", "integrations",
+    "game_mode", "scene_composer", "automation", "integrations", "ui",
 )
 
 _INT_RANGES = {
@@ -554,6 +558,18 @@ def _sanitize(config):
         if config.get(key) not in allowed:
             log.warning("Недопустимое значение %r=%r, ставлю %r", key, config.get(key), fallback)
             config[key] = fallback
+
+    ui = config.setdefault("ui", {})
+    if ui.get("theme") not in ("midnight", "ocean", "plum", "forest"):
+        ui["theme"] = "midnight"
+    accent = str(ui.get("accent", "#2b6fd6") or "#2b6fd6")
+    if not (len(accent) == 7 and accent.startswith("#")):
+        accent = "#2b6fd6"
+    try:
+        int(accent[1:], 16)
+    except ValueError:
+        accent = "#2b6fd6"
+    ui["accent"] = accent.lower()
 
     last_scene = config.get("last_scene", "")
     if not isinstance(last_scene, str):

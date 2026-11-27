@@ -387,4 +387,55 @@ QTextBrowser#guideBrowser {
     color: #e4e6ec;
 }
 
+QLineEdit#sidebarSearch {
+    background-color: #17181c;
+    border: 1px solid #2f323b;
+    border-radius: 8px;
+    padding: 7px 9px;
+    color: #e4e6ec;
+    selection-background-color: #2b6fd6;
+}
+QLineEdit#sidebarSearch:focus {
+    border-color: #2b6fd6;
+}
+
 """
+
+THEME_TINTS = {
+    "midnight": {},
+    "ocean": {
+        "#1e1f22": "#10202b", "#232428": "#182a36", "#17181c": "#0e1b24",
+        "#1b1c21": "#14232e", "#191b21": "#12222c", "#1a1c22": "#10212c",
+        "#1d2a44": "#12384a", "#242238": "#1c3040", "#262931": "#20333f",
+        "#2a2d36": "#1b2d39",
+    },
+    "plum": {
+        "#1e1f22": "#241a2b", "#232428": "#2d2036", "#17181c": "#1c1422",
+        "#1b1c21": "#2a1f33", "#191b21": "#261a2e", "#1a1c22": "#211526",
+        "#1d2a44": "#35204d", "#242238": "#3a2145", "#262931": "#33213c",
+        "#2a2d36": "#302039",
+    },
+    "forest": {
+        "#1e1f22": "#14231c", "#232428": "#1b3025", "#17181c": "#101c16",
+        "#1b1c21": "#192b22", "#191b21": "#15251d", "#1a1c22": "#12221a",
+        "#1d2a44": "#173b2b", "#242238": "#1c3528", "#262931": "#20382b",
+        "#2a2d36": "#1d3327",
+    },
+}
+
+
+def build_stylesheet(theme="midnight", accent="#2b6fd6"):
+    css = APP_STYLESHEET
+    for old, new in THEME_TINTS.get(str(theme or "midnight"), {}).items():
+        css = css.replace(old, new)
+    accent = str(accent or "#2b6fd6").lower()
+    if len(accent) == 7 and accent.startswith("#"):
+        css = css.replace("#2b6fd6", accent)
+        css = css.replace("#8fb8ff", accent)
+        try:
+            rgb = [int(accent[i:i + 2], 16) for i in (1, 3, 5)]
+            dark = "#%02x%02x%02x" % tuple(max(0, int(v * 0.45)) for v in rgb)
+            css = css.replace("#243558", dark)
+        except Exception:
+            pass
+    return css

@@ -43,6 +43,7 @@ from .automation import AutomationEngine
 from .automation_widget import AutomationWidget
 from .integrations_widget import IntegrationsWidget
 from .user_guide import GUIDE_HTML, PAGE_HELP
+from .style import build_stylesheet
 from . import autostart, i18n, updater, __version__
 
 log = logging.getLogger(__name__)
@@ -850,6 +851,9 @@ class MainWindow(QMainWindow):
                                         # но при этом окно свободно уменьшается/растягивается
 
         self.config = load_config()
+        self._ui_accent = self.config.get("ui", {}).get("accent", "#2b6fd6")
+        self._ui_theme = self.config.get("ui", {}).get("theme", "midnight")
+        self._apply_ui_theme()
         i18n.install(self.config.get("language", "ru"))
 
         self._save_timer = QTimer()
@@ -1456,12 +1460,21 @@ class MainWindow(QMainWindow):
 
         content_row = QHBoxLayout()
         content_row.setSpacing(10)
+        sidebar_col = QVBoxLayout()
+        sidebar_col.setSpacing(6)
+        self.sidebar_search = QLineEdit()
+        self.sidebar_search.setObjectName("sidebarSearch")
+        self.sidebar_search.setPlaceholderText("Поиск раздела…  Ctrl+K")
+        self.sidebar_search.setClearButtonEnabled(True)
+        self.sidebar_search.textChanged.connect(self._filter_sidebar)
+        sidebar_col.addWidget(self.sidebar_search)
         self.sidebar = QListWidget()
         self.sidebar.setObjectName("sidebar")
         self.sidebar.setFixedWidth(214)
         self.sidebar.setIconSize(QSize(18, 18))
         self.sidebar.currentRowChanged.connect(self._on_sidebar_changed)
-        content_row.addWidget(self.sidebar)
+        sidebar_col.addWidget(self.sidebar, 1)
+        content_row.addLayout(sidebar_col)
 
         content_col = QVBoxLayout()
         content_col.setSpacing(8)
@@ -1495,6 +1508,8 @@ class MainWindow(QMainWindow):
         content_col.addWidget(tabs, 1)
         content_row.addLayout(content_col, 1)
         root.addLayout(content_row, 1)
+        QShortcut("Ctrl+K", self,
+                  activated=lambda: self.sidebar_search.setFocus())
         self.tabs = tabs
 
         tabs.addTab(self._build_dashboard(), "Главная")
@@ -1774,6 +1789,24 @@ class MainWindow(QMainWindow):
         path = os.path.join(RESOURCE_DIR, "assets", "icons", f"{name}.svg")
         return QIcon(path) if os.path.exists(path) else QIcon()
 
+    def _apply_ui_theme(self):
+        app = QApplication.instance()
+        if app is None:
+            return
+        self._ui_theme = (self.config.get("ui") or {}).get("theme", "midnight")
+        self._ui_accent = (self.config.get("ui") or {}).get("accent", "#2b6fd6")
+        app.setStyleSheet(build_stylesheet(self._ui_theme, self._ui_accent))
+
+    def _on_ui_theme_changed(self, theme):
+        self.config.setdefault("ui", {})["theme"] = str(theme)
+        self._apply_ui_theme()
+        self._queue_save()
+
+    def _on_ui_accent_changed(self, accent):
+        self.config.setdefault("ui", {})["accent"] = str(accent)
+        self._apply_ui_theme()
+        self._queue_save()
+
     def _populate_sidebar(self):
         self.sidebar.blockSignals(True)
         self.sidebar.clear()
@@ -1820,6 +1853,21 @@ class MainWindow(QMainWindow):
                     item.setToolTip(tab_help)
             self.sidebar.addItem(item)
         self.sidebar.blockSignals(False)
+        self._filter_sidebar(self.sidebar_search.text()
+                             if hasattr(self, "sidebar_search") else "")
+
+    def _filter_sidebar(self, text):
+        if not hasattr(self, "sidebar"):
+            return
+        query = str(text or "").strip().lower()
+        for row in range(self.sidebar.count()):
+            item = self.sidebar.item(row)
+            if item is None:
+                continue
+            if item.data(Qt.UserRole) is None:
+                item.setHidden(bool(query))
+            else:
+                item.setHidden(bool(query) and query not in item.text().lower())
 
     def _on_sidebar_changed(self, row):
         item = self.sidebar.item(row)
@@ -1895,6 +1943,20 @@ class MainWindow(QMainWindow):
         self.dash_spotify = self._dashboard_card(cards, 1, 1, "Spotify", "—")
         layout.addLayout(cards)
 
+        palette_group = QGroupBox("Палитра обложки")
+        palette_row = QHBoxLayout(palette_group)
+        self.dash_palette_labels = []
+        for _ in range(6):
+            swatch = QLabel()
+            swatch.setFixedHeight(12)
+            swatch.setMinimumWidth(24)
+            swatch.setStyleSheet(
+                "background:#2b2e38; border-radius:3px; border:1px solid #3b4050;"
+            )
+            palette_row.addWidget(swatch, 1)
+            self.dash_palette_labels.append(swatch)
+        layout.addWidget(palette_group)
+
         quick = QGroupBox("Быстрые сцены")
         quick_row = QHBoxLayout(quick)
         for name in ("Кино", "Игра", "Ночь", "Яркий день"):
@@ -1966,6 +2028,19 @@ class MainWindow(QMainWindow):
             f"{track.get('artists', '')} — {track.get('name', '')}"
             if track else "Не играет"
         )
+        palette = getattr(self.worker, "spotify_palette", None) or []
+        for index, swatch in enumerate(getattr(self, "dash_palette_labels", [])):
+            if palette:
+                color = palette[index % len(palette)]
+                if isinstance(color, (list, tuple)) and len(color) >= 3:
+                    swatch.setStyleSheet(
+                        "background: rgb(%d,%d,%d); border-radius:3px;"
+                        " border:1px solid #3b4050;" % tuple(color[:3])
+                    )
+                    continue
+            swatch.setStyleSheet(
+                "background:#2b2e38; border-radius:3px; border:1px solid #3b4050;"
+            )
         for composition_id, button in getattr(self, "dash_comp_buttons", {}).items():
             button.setProperty("active", composition_id == active)
             button.style().unpolish(button)
@@ -5076,6 +5151,42 @@ class MainWindow(QMainWindow):
     def _build_system_tab(self):
         w = QWidget()
         layout = QVBoxLayout(w)
+
+        # --- оформление ---
+        appearance = QGroupBox("Оформление")
+        appearance_form = QFormLayout(appearance)
+        ui_cfg = self.config.get("ui", {})
+        theme_combo = QComboBox()
+        theme_combo.addItem("Ночной синий", "midnight")
+        theme_combo.addItem("Океан", "ocean")
+        theme_combo.addItem("Слива", "plum")
+        theme_combo.addItem("Лес", "forest")
+        theme_combo.setCurrentIndex(
+            max(0, theme_combo.findData(ui_cfg.get("theme", "midnight")))
+        )
+        theme_combo.currentIndexChanged.connect(
+            lambda i: self._on_ui_theme_changed(theme_combo.itemData(i))
+        )
+        appearance_form.addRow("Цветовая тема:", theme_combo)
+
+        accent_combo = QComboBox()
+        for name, color in (
+            ("Синий", "#2b6fd6"), ("Зелёный", "#2fa84f"),
+            ("Фиолетовый", "#8b5cf6"), ("Оранжевый", "#f08a24"),
+            ("Розовый", "#e04f8a"),
+        ):
+            accent_combo.addItem(name, color)
+        accent_combo.setCurrentIndex(
+            max(0, accent_combo.findData(ui_cfg.get("accent", "#2b6fd6")))
+        )
+        accent_combo.currentIndexChanged.connect(
+            lambda i: self._on_ui_accent_changed(accent_combo.itemData(i))
+        )
+        appearance_form.addRow("Акцент:", accent_combo)
+        appearance_form.addRow(QLabel(
+            "Тема меняет фон и боковое меню, акцент — выделение, ползунки и кнопки."
+        ))
+        layout.addWidget(appearance)
 
         # --- производительность ---
         perf_box = QGroupBox("Производительность")
