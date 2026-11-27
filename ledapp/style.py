@@ -424,10 +424,80 @@ THEME_TINTS = {
 }
 
 
+LIGHT_MAP = [
+    ("#1e1f22", "#f3f5fa"),
+    ("#232428", "#ffffff"),
+    ("#26272b", "#ffffff"),
+    ("#2c2e33", "#eef1f7"),
+    ("#34363c", "#e5eaf3"),
+    ("#26282c", "#e8edf5"),
+    ("#25262a", "#eef2f8"),
+    ("#2e2f34", "#d9e0eb"),
+    ("#17181c", "#eef1f8"),
+    ("#1b1c21", "#ffffff"),
+    ("#191b21", "#ffffff"),
+    ("#2b2d33", "#d9e0eb"),
+    ("#33353a", "#d9e0eb"),
+    ("#3a3c42", "#cbd3df"),
+    ("#40424a", "#c8d0dd"),
+    ("#52545e", "#9aa6b6"),
+    ("#35373d", "#d5dce7"),
+    ("#242833", "#eef1f7"),
+    ("#303645", "#e2e8f2"),
+    ("#3b4050", "#d0d7e3"),
+    ("#2f323a", "#d9e0eb"),
+    ("#2f323b", "#d9e0eb"),
+    ("#243558", "#dbe7fb"),
+    ("#c8cad2", "#354052"),
+    ("#9a9ba3", "#5f6b7b"),
+    ("#e4e4e7", "#1f2430"),
+    ("#e4e6ec", "#1f2430"),
+    ("#c8c9ce", "#39404d"),
+    ("#6b6c72", "#7a8494"),
+    ("#8a8b93", "#6b7280"),
+    ("#f0f2f7", "#1f2430"),
+    ("#b9c2d4", "#536172"),
+    ("#7f8797", "#6b7280"),
+    ("#ffffff", "#1f2430"),
+]
+
+LIGHT_OVERRIDES = """
+QFrame#dashboardHero {
+    background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+        stop:0 #dce9ff, stop:0.55 #e6dcff, stop:1 #ffffff);
+    border: 1px solid #c9d4e5;
+}
+QLabel#dashboardTitle { color: #1f2430; }
+QLabel#dashboardSubtitle { color: #435064; }
+QLabel#pageHelpTitle { color: #1f2430; }
+QLabel#pageHelpText { color: #5f6b7b; }
+QPushButton#primaryAction { color: #ffffff; }
+QPushButton#primaryAction:hover { color: #ffffff; }
+QPushButton#primaryAction:pressed { color: #ffffff; }
+QListWidget::item:selected { color: #ffffff; }
+QListWidget#sidebar::item:selected { color: #ffffff; }
+QListWidget#sidebar::item:hover { color: #1f2430; }
+QTabBar::tab:selected { color: #ffffff; }
+QLabel#dashboardCardTitle { color: #6b7280; }
+QLabel#dashboardCardValue { color: #1f2430; }
+QFrame#dashboardCard { background: #ffffff; border-color: #d9e0eb; }
+QFrame#dashboardCard:hover { border-color: #2b6fd6; }
+QFrame#pageHelp { background: #ffffff; }
+QTextBrowser#guideBrowser { background: #ffffff; color: #1f2430; }
+QLineEdit#sidebarSearch { background: #ffffff; color: #1f2430; }
+QPushButton[active="true"] { color: #1f2430; }
+"""
+
+
 def build_stylesheet(theme="midnight", accent="#2b6fd6"):
     css = APP_STYLESHEET
-    for old, new in THEME_TINTS.get(str(theme or "midnight"), {}).items():
-        css = css.replace(old, new)
+    if str(theme) == "light":
+        for old, new in LIGHT_MAP:
+            css = css.replace(old, new)
+        css += LIGHT_OVERRIDES
+    else:
+        for old, new in THEME_TINTS.get(str(theme or "midnight"), {}).items():
+            css = css.replace(old, new)
     accent = str(accent or "#2b6fd6").lower()
     if len(accent) == 7 and accent.startswith("#"):
         css = css.replace("#2b6fd6", accent)

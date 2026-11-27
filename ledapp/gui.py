@@ -15,7 +15,8 @@ import tempfile
 import threading
 import time
 
-from PyQt5.QtCore import Qt, QTimer, QRectF, QTime, QUrl, pyqtSignal, QSize
+from PyQt5.QtCore import (Qt, QTimer, QRectF, QTime, QUrl, pyqtSignal, QSize,
+                          QEasingCurve, QPropertyAnimation)
 from PyQt5.QtGui import (
     QImage, QPixmap, QPainter, QColor, QPen, QIcon, QKeySequence,
     QDesktopServices, QPixmapCache,
@@ -27,7 +28,7 @@ from PyQt5.QtWidgets import (
     QLineEdit, QPlainTextEdit, QMessageBox, QGroupBox, QProgressBar,
     QApplication, QScrollArea, QSystemTrayIcon, QMenu, QAction, QDialog,
     QTimeEdit, QShortcut, QProgressDialog, QGridLayout,
-    QFrame, QTextBrowser,
+    QFrame, QTextBrowser, QGraphicsOpacityEffect,
 )
 
 from .config import APP_DIR, RESOURCE_DIR, load_config, save_config
@@ -852,7 +853,7 @@ class MainWindow(QMainWindow):
 
         self.config = load_config()
         self._ui_accent = self.config.get("ui", {}).get("accent", "#2b6fd6")
-        self._ui_theme = self.config.get("ui", {}).get("theme", "midnight")
+        self._ui_theme = self.config.get("ui", {}).get("theme", "light")
         self._apply_ui_theme()
         i18n.install(self.config.get("language", "ru"))
 
@@ -1447,6 +1448,21 @@ class MainWindow(QMainWindow):
         )
         top_row.addWidget(self.stats_label)
 
+        self.theme_btn = QPushButton()
+        self.theme_btn.setObjectName("headerIcon")
+        self.theme_btn.setFixedSize(30, 26)
+        self.theme_btn.setToolTip("Светлая / тёмная тема")
+        self.theme_btn.clicked.connect(self._toggle_light_theme)
+        top_row.addWidget(self.theme_btn)
+
+        self.settings_btn = QPushButton()
+        self.settings_btn.setObjectName("headerIcon")
+        self.settings_btn.setFixedSize(30, 26)
+        self.settings_btn.setIcon(self._icon("settings"))
+        self.settings_btn.setToolTip("Настройки и оформление")
+        self.settings_btn.clicked.connect(lambda: self._navigate_page(15))
+        top_row.addWidget(self.settings_btn)
+
         root.addLayout(top_row)
 
         self.mini_strip_preview = QLabel()
@@ -1539,6 +1555,11 @@ class MainWindow(QMainWindow):
         self._navigate_page(0)
         self._update_page_help(0)
         self._refresh_dashboard()
+        self._update_theme_button()
+        self._pulse_phase = False
+        self._pulse_timer = QTimer(self)
+        self._pulse_timer.timeout.connect(self._pulse_status_dot)
+        self._pulse_timer.start(650)
         self.worker.set_preview_active(tabs.currentIndex() == preview_tab_index)
 
         # Нижняя строка: версия слева, явный «Выход» справа. Крестик окна
@@ -1599,6 +1620,7 @@ class MainWindow(QMainWindow):
         if index == 0:
             self._refresh_dashboard()
         self._update_page_help(index)
+        self._animate_page(index)
 
     def _build_standby_tab(self):
         from .now_playing import NowPlayingMonitor
@@ -1793,14 +1815,66 @@ class MainWindow(QMainWindow):
         app = QApplication.instance()
         if app is None:
             return
-        self._ui_theme = (self.config.get("ui") or {}).get("theme", "midnight")
+        self._ui_theme = (self.config.get("ui") or {}).get("theme", "light")
         self._ui_accent = (self.config.get("ui") or {}).get("accent", "#2b6fd6")
         app.setStyleSheet(build_stylesheet(self._ui_theme, self._ui_accent))
 
     def _on_ui_theme_changed(self, theme):
+        if theme != "light":
+            self._last_dark_theme = theme
         self.config.setdefault("ui", {})["theme"] = str(theme)
         self._apply_ui_theme()
+        self._update_theme_button()
         self._queue_save()
+
+    def _toggle_light_theme(self):
+        current = (self.config.get("ui") or {}).get("theme", "light")
+        if current == "light":
+            target = getattr(self, "_last_dark_theme", "midnight") or "midnight"
+        else:
+            self._last_dark_theme = current
+            target = "light"
+        self.config.setdefault("ui", {})["theme"] = target
+        self._apply_ui_theme()
+        self._update_theme_button()
+        self._queue_save()
+
+    def _update_theme_button(self):
+        button = getattr(self, "theme_btn", None)
+        if button is None:
+            return
+        light = self._ui_theme == "light"
+        button.setIcon(self._icon("sun" if light else "moon"))
+        button.setToolTip("Тёмная тема" if light else "Светлая тема")
+
+    def _animate_page(self, index):
+        page = self.tabs.widget(index)
+        if page is None:
+            return
+        effect = QGraphicsOpacityEffect(page)
+        page.setGraphicsEffect(effect)
+        effect.setOpacity(0.0)
+        animation = QPropertyAnimation(effect, b"opacity", self)
+        animation.setDuration(170)
+        animation.setStartValue(0.0)
+        animation.setEndValue(1.0)
+        animation.setEasingCurve(QEasingCurve.OutCubic)
+        animation.finished.connect(lambda p=page: p.setGraphicsEffect(None))
+        self._page_animation = animation
+        animation.start()
+
+    def _pulse_status_dot(self):
+        dot = getattr(self, "status_dot", None)
+        if dot is None:
+            return
+        self._pulse_phase = not getattr(self, "_pulse_phase", False)
+        if getattr(self, "_capture_running", False):
+            color = "#4ade80" if self._pulse_phase else "#22c55e"
+        elif getattr(self, "_connected_flag", False):
+            color = "#6ea8ff" if self._pulse_phase else "#4c8dff"
+        else:
+            color = "#6b6c72"
+        dot.setStyleSheet(f"color: {color}; font-size: 14px;")
 
     def _on_ui_accent_changed(self, accent):
         self.config.setdefault("ui", {})["accent"] = str(accent)
@@ -1813,6 +1887,8 @@ class MainWindow(QMainWindow):
         specs = [
             ("ОБЗОР", None, None),
             ("Главная", 0, "home"),
+            ("Настройки", 15, "settings"),
+            ("Руководство", 16, "list"),
             ("СВЕТ", None, None),
             ("Подключение", 1, "plug"),
             ("Композитор", 6, "stack-2"),
@@ -1828,11 +1904,9 @@ class MainWindow(QMainWindow):
             ("Конфигурация ленты", 11, "box"),
             ("Калибровка", 4, "ruler"),
             ("WiFi (ESP)", 13, "screen-share"),
-            ("СИСТЕМА", None, None),
+            ("ЭКРАН", None, None),
             ("Просмотр захвата", 2, "photo"),
             ("Дежурный режим", 12, "bulb"),
-            ("Настройки", 15, "settings"),
-            ("Руководство", 16, "list"),
         ]
         for title, index, icon in specs:
             item = QListWidgetItem(title)
@@ -1937,10 +2011,10 @@ class MainWindow(QMainWindow):
         cards = QGridLayout()
         cards.setHorizontalSpacing(10)
         cards.setVerticalSpacing(8)
-        self.dash_device = self._dashboard_card(cards, 0, 0, "Устройство", "—")
-        self.dash_profile = self._dashboard_card(cards, 0, 1, "Профиль", "—")
-        self.dash_composition = self._dashboard_card(cards, 1, 0, "Композиция", "—")
-        self.dash_spotify = self._dashboard_card(cards, 1, 1, "Spotify", "—")
+        self.dash_device = self._dashboard_card(cards, 0, 0, "Устройство", "—", "#4c8dff")
+        self.dash_profile = self._dashboard_card(cards, 0, 1, "Профиль", "—", "#a06bff")
+        self.dash_composition = self._dashboard_card(cards, 1, 0, "Композиция", "—", "#2fb36d")
+        self.dash_spotify = self._dashboard_card(cards, 1, 1, "Spotify", "—", "#ff5c8a")
         layout.addLayout(cards)
 
         palette_group = QGroupBox("Палитра обложки")
@@ -1991,9 +2065,19 @@ class MainWindow(QMainWindow):
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         return scroll
 
-    def _dashboard_card(self, grid, row, column, title, value):
+    def _dashboard_card(self, grid, row, column, title, value, color=None):
         card = QFrame()
         card.setObjectName("dashboardCard")
+        if color:
+            try:
+                r, g, b = (int(color[i:i + 2], 16) for i in (1, 3, 5))
+                tint = f"rgba({r},{g},{b},22)"
+            except Exception:
+                tint = "transparent"
+            card.setStyleSheet(
+                f"QFrame#dashboardCard {{ border-left: 3px solid {color};"
+                f" background-color: {tint}; }}"
+            )
         box = QVBoxLayout(card)
         box.setContentsMargins(12, 10, 12, 10)
         label = QLabel(title.upper())
@@ -5163,12 +5247,13 @@ class MainWindow(QMainWindow):
         appearance_form = QFormLayout(appearance)
         ui_cfg = self.config.get("ui", {})
         theme_combo = QComboBox()
+        theme_combo.addItem("Светлая", "light")
         theme_combo.addItem("Ночной синий", "midnight")
         theme_combo.addItem("Океан", "ocean")
         theme_combo.addItem("Слива", "plum")
         theme_combo.addItem("Лес", "forest")
         theme_combo.setCurrentIndex(
-            max(0, theme_combo.findData(ui_cfg.get("theme", "midnight")))
+            max(0, theme_combo.findData(ui_cfg.get("theme", "light")))
         )
         theme_combo.currentIndexChanged.connect(
             lambda i: self._on_ui_theme_changed(theme_combo.itemData(i))

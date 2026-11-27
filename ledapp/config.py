@@ -70,7 +70,7 @@ DEFAULT_CONFIG = {
     "monitor_index": 0,          # индекс монитора DXGI (0 = основной)
     "language": "ru",            # "ru" или "en"
     "ui": {
-        "theme": "midnight",     # midnight | ocean | plum | forest
+        "theme": "light",        # light | midnight | ocean | plum | forest
         "accent": "#2b6fd6",     # акцентный цвет интерфейса
     },
     "last_scene": "",            # последний выбранный пресет сцены
@@ -560,8 +560,8 @@ def _sanitize(config):
             config[key] = fallback
 
     ui = config.setdefault("ui", {})
-    if ui.get("theme") not in ("midnight", "ocean", "plum", "forest"):
-        ui["theme"] = "midnight"
+    if ui.get("theme") not in ("light", "midnight", "ocean", "plum", "forest"):
+        ui["theme"] = "light"
     accent = str(ui.get("accent", "#2b6fd6") or "#2b6fd6")
     if not (len(accent) == 7 and accent.startswith("#")):
         accent = "#2b6fd6"
