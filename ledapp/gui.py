@@ -1424,7 +1424,7 @@ class MainWindow(QMainWindow):
             "wled_serial": "WLED (USB-кабель)",
         }
         self.device_mode_label = QLabel(_device_labels.get(self.config.get("strip_mode", "ble"), "ELK-BLEDOM (BLE)"))
-        self.device_mode_label.setStyleSheet("color: #8fb8ff;")
+        self.device_mode_label.setObjectName("deviceMode")
         top_row.addWidget(self.device_mode_label)
 
         top_row.addStretch()
@@ -1554,6 +1554,8 @@ class MainWindow(QMainWindow):
         # по умолчанию открыта «Главная», а не подключение
         self._navigate_page(0)
         self._update_page_help(0)
+        if hasattr(self, "sidebar"):
+            self._sync_sidebar(0)
         self._refresh_dashboard()
         self._update_theme_button()
         self._pulse_phase = False
@@ -1610,17 +1612,20 @@ class MainWindow(QMainWindow):
             index == getattr(self, "_preview_tab_index", -1)
         )
         if hasattr(self, "sidebar"):
-            self.sidebar.blockSignals(True)
-            for row in range(self.sidebar.count()):
-                item = self.sidebar.item(row)
-                if item is not None and item.data(Qt.UserRole) == index:
-                    self.sidebar.setCurrentRow(row)
-                    break
-            self.sidebar.blockSignals(False)
+            self._sync_sidebar(index)
         if index == 0:
             self._refresh_dashboard()
         self._update_page_help(index)
         self._animate_page(index)
+
+    def _sync_sidebar(self, index):
+        self.sidebar.blockSignals(True)
+        for row in range(self.sidebar.count()):
+            item = self.sidebar.item(row)
+            if item is not None and item.data(Qt.UserRole) == index:
+                self.sidebar.setCurrentRow(row)
+                break
+        self.sidebar.blockSignals(False)
 
     def _build_standby_tab(self):
         from .now_playing import NowPlayingMonitor

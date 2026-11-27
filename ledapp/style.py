@@ -462,6 +462,7 @@ LIGHT_MAP = [
 ]
 
 LIGHT_OVERRIDES = """
+QLabel#deviceMode { color: #3f6fb5; }
 QFrame#dashboardHero {
     background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1,
         stop:0 #dce9ff, stop:0.55 #e6dcff, stop:1 #ffffff);
@@ -474,8 +475,11 @@ QLabel#pageHelpText { color: #5f6b7b; }
 QPushButton#primaryAction { color: #ffffff; }
 QPushButton#primaryAction:hover { color: #ffffff; }
 QPushButton#primaryAction:pressed { color: #ffffff; }
+QPushButton { color: #1f2430; }
+QPushButton#dangerAction { color: #8f2f2f; }
+QPushButton#exitAction { color: #a13a3a; }
 QListWidget::item:selected { color: #ffffff; }
-QListWidget#sidebar::item:selected { color: #ffffff; }
+QListWidget#sidebar::item:selected { color: #ffffff; background-color: #2b6fd6; }
 QListWidget#sidebar::item:hover { color: #1f2430; }
 QTabBar::tab:selected { color: #ffffff; }
 QLabel#dashboardCardTitle { color: #6b7280; }
@@ -486,10 +490,12 @@ QFrame#pageHelp { background: #ffffff; }
 QTextBrowser#guideBrowser { background: #ffffff; color: #1f2430; }
 QLineEdit#sidebarSearch { background: #ffffff; color: #1f2430; }
 QPushButton[active="true"] { color: #1f2430; }
+
+QLabel#deviceMode { color: #8fb8ff; }
+
 """
 
-
-def build_stylesheet(theme="midnight", accent="#2b6fd6"):
+def build_stylesheet(theme="light", accent="#2b6fd6"):
     css = APP_STYLESHEET
     if str(theme) == "light":
         for old, new in LIGHT_MAP:
